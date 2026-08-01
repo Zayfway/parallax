@@ -209,4 +209,128 @@ mod imp {
             .map(|p| p.0.to_string_lossy().into_owned())
             .map_err(|e| format!("signature : {e}"))
     }
+
+    use isideload::dev::certificates::{CertificatesApi, DevelopmentCertificate};
+    use isideload::dev::device_type::DeveloperDeviceType;
+
+    #[derive(serde::Serialize)]
+    struct CertInfo {
+        name: String,
+        serial_number: String,
+        machine_name: String,
+        certificate_id: String,
+        status: String,
+        expiration: String,
+    }
+
+    impl From<&DevelopmentCertificate> for CertInfo {
+        fn from(c: &DevelopmentCertificate) -> Self {
+            let s = |o: &Option<String>| o.clone().unwrap_or_default();
+            CertInfo {
+                name: s(&c.name),
+                serial_number: s(&c.serial_number),
+                machine_name: s(&c.machine_name),
+                certificate_id: s(&c.certificate_id),
+                status: s(&c.status),
+                expiration: c.expiration_date.as_ref()
+                    .map(|d| d.to_xml_format()).unwrap_or_default(),
+            }
+        }
+    }
+
+    pub fn list_certs(s: &mut Session) -> Result<String, String> {
+        s.runtime.block_on(async {
+            let team = s.sideloader.get_team().await
+                .map_err(|e| format!("equipe : {e}"))?;
+            let certs = s.sideloader.get_dev_session()
+                .list_ios_certs(&team).await
+                .map_err(|e| format!("liste des certificats : {e}"))?;
+            tracing::info!("{} certificat(s) de developpement iOS", certs.len());
+            let infos: Vec<CertInfo> = certs.iter().map(CertInfo::from).collect();
+            serde_json::to_string(&infos).map_err(|e| format!("json : {e}"))
+        })
+    }
+
+    pub fn revoke_cert(s: &mut Session, serial: &str) -> Result<(), String> {
+        s.runtime.block_on(async {
+            let team = s.sideloader.get_team().await
+                .map_err(|e| format!("equipe : {e}"))?;
+            tracing::info!("revocation du certificat {serial}");
+            s.sideloader.get_dev_session()
+                .revoke_development_cert(&team, serial, DeveloperDeviceType::Ios)
+                .await
+                .map_err(|e| format!("revocation : {e}"))
+        })
+    }
+}
+
+/// Certificats de developpement iOS de l equipe, en JSON. NULL en cas d echec.
+/// La chaine rendue doit etre liberee par `px_string_free`.
+///
+/// # Safety
+/// `session` doit venir de `px_apple_signin`.
+#[no_mangle]
+pub unsafe extern "C" fn px_cert_list(session: *mut PxSignSession) -> *mut c_char {
+    clear_last_error();
+    if session.is_null() {
+        set_last_error("px_cert_list : session nulle");
+        return ptr::null_mut();
+    }
+    #[cfg(feature = "device-account")]
+    {
+        match imp::list_certs(&mut (*session).inner) {
+            Ok(json) => std::ffi::CString::new(json)
+                .map(|c| c.into_raw())
+                .unwrap_or(ptr::null_mut()),
+            Err(e) => { set_last_error(e); ptr::null_mut() }
+        }
+    }
+    #[cfg(not(feature = "device-account"))]
+    {
+        set_last_error("px_cert_list : compile sans --features device-account");
+        ptr::null_mut()
+    }
+}
+
+/// Revoque un certificat par son numero de serie.
+///
+/// # Safety
+/// `session` doit venir de `px_apple_signin` ; `serial` chaine UTF-8 NUL.
+#[no_mangle]
+pub unsafe extern "C" fn px_cert_revoke(
+    session: *mut PxSignSession, serial: *const c_char,
+) -> c_int {
+    clear_last_error();
+    let Some(serial) = cstr(serial) else {
+        set_last_error("px_cert_revoke : numero de serie nul");
+        return PX_ERR_ARG;
+    };
+    if session.is_null() {
+        set_last_error("px_cert_revoke : session nulle");
+        return PX_ERR_ARG;
+    }
+    #[cfg(feature = "device-account")]
+    {
+        match imp::revoke_cert(&mut (*session).inner, &serial) {
+            Ok(()) => PX_OK,
+            Err(e) => { set_last_error(e); PX_ERR_INTERNAL }
+        }
+    }
+    #[cfg(not(feature = "device-account"))]
+    {
+        let _ = serial;
+        set_last_error("px_cert_revoke : compile sans --features device-account");
+        PX_ERR_NOT_BUILT
+    }
+}
+
+/// Libere une chaine rendue par le coeur natif.
+///
+/// # Safety
+/// `s` doit etre null ou provenir de ce module.
+#[no_mangle]
+pub unsafe extern "C" fn px_string_free(s: *mut c_char) {
+    if !s.is_null() {
+        drop(std::ffi::CString::from_raw(s));
+    }
 }
