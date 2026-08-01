@@ -45,7 +45,7 @@ struct PairingScreen: View {
             case .dormant, .failed: 0
             case .broadcasting:     1
             case .code:             2
-            case .ready:            3
+            case .ready:            4
             }
         }
 
@@ -321,6 +321,10 @@ struct PairingScreen: View {
         switch phase {
         case .ready:
             VStack(spacing: PX.Space.tight) {
+                ShareLink(item: PairingStore.fileURL) {
+                    Label("Exporter le fichier", systemImage: "square.and.arrow.up")
+                }
+                .buttonStyle(ProminentButtonStyle())
                 Button {
                     Task { await pairing.start() }
                 } label: {
