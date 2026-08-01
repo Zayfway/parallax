@@ -75,7 +75,7 @@ final class LogBridge: ObservableObject {
 
     @Published private(set) var lines: [String] = []
 
-    static func install() {
+    nonisolated static func install() {
         _ = px_log_init { pointer in
             guard let pointer else { return }
             let line = String(cString: pointer)
