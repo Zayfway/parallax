@@ -208,14 +208,14 @@ func pxReadySink(
     _ port: UInt16,
     _ keys: UnsafePointer<UnsafePointer<CChar>?>?,
     _ values: UnsafePointer<UnsafePointer<CChar>?>?,
-    _ count: Int
+    _ count: UInt
 ) {
     guard let serviceID else { return }
     let identifier = String(cString: serviceID)
 
     var records: [(String, String)] = []
     if let keys, let values {
-        for index in 0..<count {
+        for index in 0..<Int(count) {
             guard let key = keys[index], let value = values[index] else { continue }
             records.append((String(cString: key), String(cString: value)))
         }
