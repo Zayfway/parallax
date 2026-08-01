@@ -91,23 +91,37 @@ final class RemotePairingBrowser: NSObject, ObservableObject {
 
 extension RemotePairingBrowser: NetServiceBrowserDelegate, NetServiceDelegate {
 
+    // `NetService` n'est pas `Sendable`, donc le faire traverser une frontière
+    // d'isolation — ne serait-ce que par `Task { @MainActor in }` — est refusé
+    // en mode Swift 6. On n'en a pas besoin : la recherche et la résolution ont
+    // été lancées depuis le `MainActor`, donc sur la boucle d'exécution
+    // principale, et c'est là que ces rappels sont livrés. On l'affirme plutôt
+    // que de sauter, ce qui évite l'envoi et garde le traitement synchrone.
+
     nonisolated func netServiceBrowser(
         _ browser: NetServiceBrowser, didFind service: NetService, moreComing: Bool
     ) {
-        Task { @MainActor in
+        MainActor.assumeIsolated {
             service.delegate = self
-            self.resolving.append(service)
+            resolving.append(service)
             service.resolve(withTimeout: 5)
         }
     }
 
     nonisolated func netServiceDidResolveAddress(_ sender: NetService) {
-        // On veut une adresse littérale, pas le nom d'hôte `.local` : Rust
-        // ouvre un socket TCP brut et ne fait pas de résolution mDNS.
-        let address = sender.addresses?.compactMap(Self.literalAddress).first
-        Task { @MainActor in
-            guard let address, sender.port > 0 else { return }
-            self.deliver(Endpoint(host: address, port: UInt16(sender.port), name: sender.name))
+        MainActor.assumeIsolated {
+            // On veut une adresse littérale, pas le nom d'hôte `.local` : Rust
+            // ouvre un socket TCP brut et ne fait pas de résolution mDNS.
+            guard let address = sender.addresses?.compactMap(Self.literalAddress).first,
+                  sender.port > 0 else { return }
+            deliver(Endpoint(host: address, port: UInt16(sender.port), name: sender.name))
+        }
+    }
+
+    nonisolated func netService(_ sender: NetService, didNotResolve errorDict: [String: NSNumber]) {
+        let code = errorDict[NetService.errorCode]?.intValue ?? -1
+        MainActor.assumeIsolated {
+            LogBridge.shared.note("résolution Bonjour échouée (code \(code))")
         }
     }
 
