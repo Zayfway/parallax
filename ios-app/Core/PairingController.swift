@@ -39,7 +39,7 @@ final class PairingController: ObservableObject {
 
         do {
             try startKeepAlive()
-            try advertise()
+            // Annonce mDNS assuree par le host Rust.
 
             LogBridge.shared.note("host de jumelage démarré — en attente de Réglages")
 

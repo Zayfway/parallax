@@ -50,6 +50,8 @@ struct CertificatesScreen: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.top, PX.Space.tight)
 
+                    AppleAccountCard()
+
                     if certificates.isEmpty {
                         emptyState
                     } else {

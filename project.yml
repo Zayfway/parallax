@@ -42,7 +42,7 @@ targets:
         # Ces deux clés conditionnent la découverte par Réglages.
         NSLocalNetworkUsageDescription:
           Parallax annonce un service de jumelage que ton iPhone doit trouver sur le réseau local.
-        NSBonjourServices: ["_remotepairing._tcp", "_parallax._tcp"]
+        NSBonjourServices: ["_remotepairing-pairable-host._tcp", "_remotepairing._tcp", "_parallax._tcp"]
         NSLocationWhenInUseUsageDescription:
           Affiche ta position réelle sur la carte comme point de départ.
         ITSAppUsesNonExemptEncryption: false
