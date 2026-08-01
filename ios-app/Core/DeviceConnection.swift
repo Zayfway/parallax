@@ -54,6 +54,7 @@ final class DeviceConnection: ObservableObject {
     /// la réponse à « la DDI est-elle montée ? » sans aucun appel réseau.
     @Published private(set) var services: [String: Int] = [:]
 
+    /// Non isolé : voir l'en-tête de `RemotePairingBrowser`.
     private let browser = RemotePairingBrowser()
     private var ddiVerified = false
 
@@ -128,12 +129,15 @@ final class DeviceConnection: ObservableObject {
     enum ConnectionError: LocalizedError {
         case noTunnel
         case noPairing
+        case noService
         case handshakeFailed(String)
 
         var errorDescription: String? {
             switch self {
             case .noTunnel:  "Ouvre LocalDevVPN et touche Connect."
             case .noPairing: "Aucun fichier de jumelage. Passe par l'onglet Jumelage."
+            case .noService:
+                "Service de jumelage introuvable sur le réseau local. Vérifie que le mode développeur est actif et que l'autorisation Réseau local est accordée dans Réglages › Parallax."
             case .handshakeFailed(let why): why
             }
         }
@@ -157,12 +161,16 @@ final class DeviceConnection: ObservableObject {
         let path = PairingStore.fileURL.path
         try FFI.check(px_pairing_validate(path))
 
-        let endpoint = try await browser.discover()
-        LogBridge.shared.note("montage du tunnel vers \(endpoint.host):\(endpoint.port)…")
-
-        // Appel C bloquant, plusieurs secondes : jamais dans une Task.
+        // Découverte Bonjour puis montage du tunnel, tous deux bloquants, dans
+        // le même saut hors du pool coopératif.
+        let browser = self.browser
         let handle: OpaquePointer = try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
+                guard let endpoint = browser.discover() else {
+                    continuation.resume(throwing: ConnectionError.noService)
+                    return
+                }
+
                 let result = path.withCString { p in
                     endpoint.host.withCString { h in
                         px_tunnel_connect(p, h, endpoint.port)
