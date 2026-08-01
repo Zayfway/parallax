@@ -24,10 +24,14 @@ struct RootView: View {
 
     var body: some View {
         TabView {
-            Tab("Installer", systemImage: "square.and.arrow.down") { SideloadScreen() }
-            Tab("Jumelage", systemImage: "lock.iphone") { PairingScreen() }
-            Tab("Carte", systemImage: "location.viewfinder") { MapScreen() }
-            Tab("Réglages", systemImage: "slider.horizontal.3") { SettingsScreen() }
+            SideloadScreen()
+                .tabItem { Label("Installer", systemImage: "square.and.arrow.down") }
+            PairingScreen()
+                .tabItem { Label("Jumelage", systemImage: "lock.iphone") }
+            MapScreen()
+                .tabItem { Label("Carte", systemImage: "location.viewfinder") }
+            SettingsScreen()
+                .tabItem { Label("Réglages", systemImage: "slider.horizontal.3") }
         }
         .environmentObject(connection)
         .environmentObject(pairing)

@@ -104,8 +104,8 @@ final class LocationEngine: ObservableObject {
             // clear() avant close() : rendre le GPS réel explicitement plutôt que
             // de compter sur l'effet de bord de la fermeture. Le résultat est le
             // même, mais l'intention est lisible dans les logs de support.
-            _ = ss_location_clear(session)
-            ss_location_close(session)
+            _ = px_location_clear(session)
+            px_location_close(session)
         }
         session = nil
         currentFix = nil
@@ -155,7 +155,7 @@ final class LocationEngine: ObservableObject {
             return
         }
 
-        guard let opened = ss_location_open(rsd) else {
+        guard let opened = px_location_open(rsd) else {
             state = .failed(lastRustError() ?? "Ouverture du canal DVT impossible")
             return
         }
@@ -235,8 +235,8 @@ final class LocationEngine: ObservableObject {
             target = c
         }
 
-        let rc = ss_location_set(session, target.latitude, target.longitude)
-        guard rc == SS_OK else { return false }
+        let rc = px_location_set(session, target.latitude, target.longitude)
+        guard rc == PX_OK else { return false }
 
         await MainActor.run { self.currentFix = target }
         return true
@@ -248,7 +248,7 @@ final class LocationEngine: ObservableObject {
     /// cherche à supprimer.
     private func reopen() async {
         if let old = session {
-            ss_location_close(old)
+            px_location_close(old)
             session = nil
         }
 
@@ -260,7 +260,7 @@ final class LocationEngine: ObservableObject {
             return
         }
 
-        guard let rsd = connection.rsdHandle, let opened = ss_location_open(rsd) else {
+        guard let rsd = connection.rsdHandle, let opened = px_location_open(rsd) else {
             await noteAsync(lastRustError() ?? "réouverture DVT échouée")
             return
         }
@@ -269,13 +269,13 @@ final class LocationEngine: ObservableObject {
 
         // Réapplique immédiatement, sans attendre le prochain tick.
         if let fix = await MainActor.run(body: { self.currentFix }) {
-            _ = ss_location_set(opened, fix.latitude, fix.longitude)
+            _ = px_location_set(opened, fix.latitude, fix.longitude)
         }
     }
 
     private func applyNow(_ coordinate: CLLocationCoordinate2D) async {
         guard let session else { return }
-        if ss_location_set(session, coordinate.latitude, coordinate.longitude) == SS_OK {
+        if px_location_set(session, coordinate.latitude, coordinate.longitude) == PX_OK {
             currentFix = coordinate
         }
     }
@@ -283,7 +283,7 @@ final class LocationEngine: ObservableObject {
     // MARK: - Divers
 
     private func lastRustError() -> String? {
-        guard let ptr = ss_last_error() else { return nil }
+        guard let ptr = px_last_error() else { return nil }
         return String(cString: ptr)
     }
 
