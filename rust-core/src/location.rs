@@ -269,8 +269,8 @@ mod imp {
 
         runtime.spawn(async move {
             let (raw, raw_ad) = (raw, raw_ad);
-            let rsd = unsafe { &mut *(raw.0 as *mut RsdHandshake) };
-            let adapter = unsafe { &mut *(raw_ad.0 as *mut AdapterHandle) };
+            let rsd: &'static mut RsdHandshake = unsafe { &mut *(raw.0 as *mut RsdHandshake) };
+            let adapter: &'static mut AdapterHandle = unsafe { &mut *(raw_ad.0 as *mut AdapterHandle) };
 
             let mut server = match RemoteServerClient::connect_rsd(adapter, rsd).await {
                 Ok(s) => s,
