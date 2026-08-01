@@ -29,7 +29,7 @@ pub mod pairing;
 // Cargo unifie l'instance d'idevice ; vérifier l'absence de doublons avec `nm`
 // (la CI le fait).
 #[cfg(feature = "device")]
-extern crate idevice_ffi as _;
+const _: () = ();
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Codes d'erreur — stables, mappés vers des messages par la couche Swift.
