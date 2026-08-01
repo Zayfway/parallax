@@ -56,7 +56,7 @@ jobs:
           restore-keys: cargo-${{ runner.os }}-
 
       - name: Construire le xcframework
-        run: ./build-rust.sh "${{ inputs.features }}"
+        run: ./build-rust.sh "${{ inputs.features || 'device' }}"
 
       - name: Vérifier l'absence de symboles dupliqués
         # Avec --features device, idevice 0.1.61 (via isideload) et 0.1.63 (git)
