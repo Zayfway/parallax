@@ -107,7 +107,7 @@ enum TwoFactorBridge {
     private static let gate = DispatchSemaphore(value: 0)
 
     static let entry: PxTwoFactorCallback = { () -> UnsafePointer<CChar>? in
-        NotificationCenter.default.post(name: .twoFactorRequested, object: nil)
+        DispatchQueue.main.async { NotificationCenter.default.post(name: .twoFactorRequested, object: nil) }
         gate.wait()
 
         buffer?.deallocate()

@@ -47,7 +47,7 @@ final class PairingController: ObservableObject {
             // sur celui-ci pour publier le code.
             let path = PairingStore.fileURL.path
             let code = try await withCheckedThrowingContinuation { continuation in
-                Task.detached {
+                DispatchQueue.global(qos: .userInitiated).async {
                     let result = "Parallax".withCString { name in
                         path.withCString { out in
                             px_pairing_run_host(name, out) { pointer in
