@@ -20,7 +20,7 @@ struct PairingScreen: View {
 
     var body: some View {
         ZStack {
-            PX.Color.night.ignoresSafeArea()
+            PX.Color.canvas
 
             ScrollView {
                 VStack(spacing: PX.Space.snug) {
@@ -178,6 +178,9 @@ private struct Step<Content: View>: View {
                 .foregroundStyle(PX.Color.inkMuted)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+}
+       }
     }
 }
 

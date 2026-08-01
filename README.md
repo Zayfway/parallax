@@ -322,3 +322,78 @@ observable ; sans elle, l'étape suivante échoue de façon illisible.
   nécessaire.
 - Le `silence.wav` généré fait une seconde. Il suffit, mais vérifie sur
   appareil que la boucle empêche bien la suspension pendant le jumelage.
+
+---
+
+## Design : ce qui a été fait au second passage
+
+### Le verre, à la main
+
+`.glassEffect()` — le vrai Liquid Glass — est une API **iOS 26**. La cible du
+projet est 17.4, pour que les utilisateurs d'iOS 17 à 25 gardent le module GPS
+via un fichier de jumelage importé. Le verre est donc reconstruit en quatre
+couches dans `GlassCard` :
+
+1. matériau système flouté → la réfraction
+2. voile teinté par-dessus → la profondeur
+3. **liseré clair sur l'arête supérieure** → l'éclairage
+4. ombre portée douce → le détachement
+
+La couche 3 est celle qu'on oublie, et c'est elle qui sépare « verre » de
+« rectangle flou ».
+
+Le fond n'est plus une couleur plate : `PX.Color.canvas` ajoute un dégradé
+radial en haut d'écran. Sans lui, le matériau translucide n'a rien à réfracter
+et tout le système s'aplatit.
+
+**Si tu préfères le vrai Liquid Glass**, une seule ligne à changer dans
+`project.yml` — `deploymentTarget: { iOS: "26.0" }` — puis remplacer
+`.glassCard()` par `.glassEffect()`. Tu perds iOS 17–25. Comme le jumelage
+on-device exige déjà iOS 27, la perte est plus faible qu'elle en a l'air : elle
+ne coûte que le chemin « fichier importé depuis un PC ».
+
+### Le vocabulaire de motion
+
+Quatre gestes nommés par intention, dans `PX.Motion` : `tap`, `settle`,
+`acquire`, `breathe`. Quand chaque animation choisit ses propres chiffres,
+l'ensemble part en vrille sans qu'on sache pourquoi.
+
+### Le moment orchestré
+
+**Un seul.** L'acquisition d'un point : anneaux ambrés qui se propagent une
+fois depuis le marqueur, retour haptique de succès, chiffres de la bande
+d'instruments qui roulent au lieu de sauter.
+
+Il se déclenche sur événement, pas en boucle — un effet permanent devient du
+décor et cesse de signifier quoi que ce soit.
+
+Autour, uniquement du discret : ressort sur les boutons, halo qui respire quand
+la session est vivante, cap qui apparaît sur le joystick pendant le geste
+seulement, retour haptique à chaque changement de palier de vitesse.
+
+### La teinte globale
+
+Quand la simulation est active, **toute la barre d'onglets passe à l'ambre**.
+C'est le seul endroit où la couleur signature déborde d'un écran : elle devient
+un signal visible même depuis l'onglet Installer, pour qu'on ne puisse pas
+oublier que le GPS ment.
+
+### Certificats
+
+L'écran est désormais câblé comme cinquième onglet. Il existe parce qu'Apple
+limite un compte gratuit à trois certificats : au-delà, la signature échoue
+avec un message opaque et l'utilisateur n'a aucun moyen de voir ce qui occupe
+ses emplacements. C'est la première cause d'abandon sur ce type d'outil.
+
+## Avancer sur les modules natifs
+
+Le profil reste `stub`. Pour passer à la suite, la méthode la plus rapide n'est
+pas de deviner les signatures d'idevice mais de **laisser le compilateur les
+dicter** :
+
+Actions → Build IPA → **Run workflow** → features : `device-location`.
+
+Cargo répondra par des erreurs très précises — « expected 2 arguments, found 3 »,
+« no method named `set` found ». C'est de la documentation exacte, obtenue en
+un run, là où la doc publique reste vague. Récupère le log et on corrige
+`location.rs` en une passe.

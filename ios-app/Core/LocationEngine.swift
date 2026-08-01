@@ -54,6 +54,8 @@ final class LocationEngine: ObservableObject {
     @Published private(set) var state: State = .idle
     @Published private(set) var currentFix: CLLocationCoordinate2D?
     @Published private(set) var log: [String] = []
+    /// Trace en cours de lecture, pour l'affichage. `nil` si aucune.
+    @Published private(set) var playingTrack: GPXTrack?
 
     private var session: OpaquePointer?
     private var pump: Task<Void, Never>?
@@ -99,6 +101,7 @@ final class LocationEngine: ObservableObject {
         pump?.cancel()
         pump = nil
         source = nil
+        playingTrack = nil
 
         if let session {
             // clear() avant close() : rendre le GPS réel explicitement plutôt que
@@ -129,8 +132,18 @@ final class LocationEngine: ObservableObject {
     }
 
     func play(track: GPXTrack) {
+        playingTrack = track
         source = .track(track, startedAt: .now)
         note("lecture GPX : \(track.points.count) points, \(Int(track.duration))s")
+    }
+
+    /// Arrête la lecture GPX et fige la position courante.
+    /// La session reste ouverte : couper le spoof pour arrêter un trajet
+    /// obligerait à tout relancer, ce qui n'est jamais ce qu'on veut.
+    func stopTrack() {
+        playingTrack = nil
+        if let fix = currentFix { source = .fixed(fix) }
+        note("lecture GPX arrêtée")
     }
 
     // MARK: - Boucle supervisée
@@ -228,7 +241,7 @@ final class LocationEngine: ObservableObject {
         case .track(let track, let startedAt):
             let elapsed = Date.now.timeIntervalSince(startedAt)
             guard let c = track.coordinate(atElapsed: elapsed) else {
-                await MainActor.run { self.note("fin de la trace GPX") }
+                await MainActor.run { self.note("fin de la trace GPX"); self.playingTrack = nil }
                 self.source = .fixed(currentFix ?? track.points.last!.coordinate)
                 return true
             }

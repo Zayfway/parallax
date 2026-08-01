@@ -17,7 +17,7 @@ struct SettingsScreen: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                PX.Color.night.ignoresSafeArea()
+                PX.Color.canvas
 
                 ScrollView {
                     VStack(spacing: PX.Space.snug) {
@@ -139,5 +139,8 @@ struct SettingsScreen: View {
         }
         .padding(PX.Space.base)
         .glassCard()
+    }
+}
+ssCard()
     }
 }

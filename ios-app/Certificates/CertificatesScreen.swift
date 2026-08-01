@@ -29,7 +29,7 @@ struct CertificatesScreen: View {
 
     var body: some View {
         ZStack {
-            PX.Color.night.ignoresSafeArea()
+            PX.Color.canvas
 
             ScrollView {
                 VStack(spacing: PX.Space.snug) {
@@ -145,6 +145,9 @@ private struct Row: View {
                 .font(PX.Font.mono(11.5))
                 .foregroundStyle(PX.Color.inkMuted)
         }
+    }
+}
+       }
     }
 }
 

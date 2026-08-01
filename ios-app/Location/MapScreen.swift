@@ -3,6 +3,12 @@ import MapKit
 import CoreLocation
 import UniformTypeIdentifiers
 
+/// Onglet Carte.
+///
+/// La carte occupe tout l'écran et les panneaux flottent dessus en verre : le
+/// sujet, c'est le territoire, pas les contrôles. Chaque panneau n'apparaît
+/// que quand il a quelque chose à dire — un écran couvert de commandes inertes
+/// est ce qu'on cherche à éviter.
 struct MapScreen: View {
 
     @EnvironmentObject private var engine: LocationEngine
@@ -12,100 +18,172 @@ struct MapScreen: View {
     @State private var pendingDrop: CLLocationCoordinate2D?
     @State private var showingImporter = false
     @State private var importError: String?
+    @State private var fixCount = 0
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            MapReader { proxy in
-                Map(position: $camera) {
-                    if let fix = engine.currentFix {
-                        Annotation("Position simulée", coordinate: fix) {
-                            SimulatedPin(active: engine.state == .simulating)
-                        }
-                    }
-                    if let pending = pendingDrop {
-                        Annotation("Nouveau point", coordinate: pending) {
-                            Image(systemName: "mappin.circle.fill")
-                                .font(.title)
-                                .foregroundStyle(.orange)
-                        }
-                    }
-                }
-                .mapStyle(style.mapStyle)
-                .onTapGesture { screenPoint in
-                    if let coord = proxy.convert(screenPoint, from: .local) {
-                        pendingDrop = coord
-                    }
-                }
-            }
-            .ignoresSafeArea(edges: .top)
-
-            VStack(spacing: 12) {
-                if let pending = pendingDrop {
-                    DropConfirmation(coordinate: pending) {
-                        Task { await activate(at: pending) }
-                        pendingDrop = nil
-                    } cancel: {
-                        pendingDrop = nil
-                    }
-                }
-
-                if engine.state == .simulating || isDegraded {
-                    Joystick { bearing, speed in
-                        engine.joystick(bearingDegrees: bearing, metersPerSecond: speed)
-                    }
-                }
-
-                StatusBar(state: engine.state)
-            }
-            .padding()
+            map
+            overlays
         }
         .safeAreaInset(edge: .top) { toolbar }
         .fileImporter(
             isPresented: $showingImporter,
             allowedContentTypes: [UTType(filenameExtension: "gpx") ?? .xml]
-        ) { result in
-            handleImport(result)
-        }
+        ) { handleImport($0) }
         .alert("Import GPX", isPresented: .constant(importError != nil)) {
             Button("OK") { importError = nil }
         } message: {
             Text(importError ?? "")
         }
+        // Le fix acquis se sent avant de se voir.
+        .sensoryFeedback(.success, trigger: fixCount)
     }
 
-    private var isDegraded: Bool {
-        if case .degraded = engine.state { return true }
-        return false
-    }
+    // MARK: - Carte
 
-    private var toolbar: some View {
-        HStack {
-            Picker("Style", selection: $style) {
-                ForEach(MapStyleChoice.allCases, id: \.self) { Text($0.label).tag($0) }
+    private var map: some View {
+        MapReader { proxy in
+            Map(position: $camera) {
+                if let fix = engine.currentFix {
+                    Annotation("Position simulée", coordinate: fix) {
+                        ZStack {
+                            FixAcquiredRing(trigger: fixCount)
+                            SimulatedMarker(live: engine.state == .simulating,
+                                            degraded: isDegraded)
+                        }
+                    }
+                }
+                if let pending = pendingDrop {
+                    Annotation("Nouveau point", coordinate: pending) {
+                        Image(systemName: "mappin.circle.fill")
+                            .font(.system(size: 30))
+                            .foregroundStyle(PX.Color.azimuth)
+                            .shadow(color: .black.opacity(0.5), radius: 6, y: 3)
+                            .transition(.scale(scale: 0.5).combined(with: .opacity))
+                    }
+                }
             }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 260)
+            .mapStyle(style.mapStyle)
+            .onTapGesture { point in
+                if let coordinate = proxy.convert(point, from: .local) {
+                    withAnimation(PX.Motion.tap) { pendingDrop = coordinate }
+                }
+            }
+        }
+        .ignoresSafeArea(edges: .top)
+    }
+
+    // MARK: - Panneaux
+
+    private var overlays: some View {
+        VStack(spacing: PX.Space.snug) {
+            if let track = engine.playingTrack {
+                trackCard(track)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
+            if let pending = pendingDrop {
+                DropConfirmation(coordinate: pending) {
+                    Task { await activate(at: pending) }
+                    withAnimation(PX.Motion.acquire) { pendingDrop = nil }
+                    fixCount += 1
+                } cancel: {
+                    withAnimation(PX.Motion.tap) { pendingDrop = nil }
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
+            HStack(alignment: .bottom, spacing: PX.Space.snug) {
+                StatusBar(state: engine.state)
+
+                if engine.state == .simulating || isDegraded {
+                    Joystick { bearing, speed in
+                        engine.joystick(bearingDegrees: bearing, metersPerSecond: speed)
+                    }
+                    .transition(.scale(scale: 0.7).combined(with: .opacity))
+                }
+            }
+        }
+        .padding(PX.Space.base)
+        .animation(PX.Motion.settle, value: engine.state)
+        .animation(PX.Motion.settle, value: pendingDrop != nil)
+    }
+
+    private func trackCard(_ track: GPXTrack) -> some View {
+        HStack(spacing: PX.Space.snug) {
+            Image(systemName: "point.topleft.down.to.point.bottomright.curvepath.fill")
+                .font(.system(size: 15))
+                .foregroundStyle(PX.Color.signal)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(track.name)
+                    .font(PX.Font.display(13.5, .semibold))
+                    .foregroundStyle(PX.Color.ink)
+                Text("\(track.points.count) points · \(Int(track.duration)) s")
+                    .font(PX.Font.mono(11))
+                    .foregroundStyle(PX.Color.inkMuted)
+            }
 
             Spacer()
 
             Button {
-                showingImporter = true
+                engine.stopTrack()
             } label: {
-                Label("Importer un GPX", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
-                    .labelStyle(.iconOnly)
+                Image(systemName: "stop.fill").font(.system(size: 13))
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.plain)
+            .foregroundStyle(PX.Color.inkMuted)
+        }
+        .padding(PX.Space.base)
+        .glassCard()
+    }
+
+    private var toolbar: some View {
+        HStack(spacing: PX.Space.tight) {
+            ForEach(MapStyleChoice.allCases, id: \.self) { choice in
+                let active = choice == style
+                Text(choice.label)
+                    .font(PX.Font.display(12.5, active ? .semibold : .medium))
+                    .foregroundStyle(active ? PX.Color.ink : PX.Color.inkFaint)
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 8)
+                    .background(
+                        Capsule().fill(active ? PX.Color.strata : .clear)
+                    )
+                    .contentShape(Capsule())
+                    .onTapGesture { withAnimation(PX.Motion.tap) { style = choice } }
+            }
+
+            Spacer()
+
+            Button { showingImporter = true } label: {
+                Image(systemName: "arrow.down.doc").font(.system(size: 15))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(PX.Color.inkMuted)
+            .padding(.horizontal, 6)
 
             if engine.state != .idle {
-                Button("Arrêter", role: .destructive) {
+                Button {
                     Task { await engine.stop() }
+                } label: {
+                    Image(systemName: "xmark.circle.fill").font(.system(size: 17))
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.plain)
+                .foregroundStyle(PX.Color.alert)
             }
         }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
-        .background(.bar)
+        .padding(.horizontal, PX.Space.snug)
+        .padding(.vertical, PX.Space.tight)
+        .glassCard(radius: PX.Radius.control)
+        .padding(.horizontal, PX.Space.base)
+    }
+
+    // MARK: -
+
+    private var isDegraded: Bool {
+        if case .degraded = engine.state { return true }
+        return engine.state == .waitingForWiFi
     }
 
     private func activate(at coordinate: CLLocationCoordinate2D) async {
@@ -135,6 +213,7 @@ struct MapScreen: View {
                     await engine.start(at: first.coordinate)
                 }
                 engine.play(track: track)
+                fixCount += 1
             }
         } catch {
             importError = error.localizedDescription
@@ -142,89 +221,7 @@ struct MapScreen: View {
     }
 }
 
-// MARK: - Joystick
-
-/// Palet analogique. Le cap vient de l'angle, la vitesse de l'amplitude.
-///
-/// Trois vitesses discrètes plutôt qu'un continu : à 1 fix/s, un continu produit
-/// des écarts de vitesse que le système lisse de toute façon, et le retour
-/// discret est bien plus contrôlable au pouce.
-private struct Joystick: View {
-
-    let onMove: (_ bearing: Double, _ metersPerSecond: Double) -> Void
-
-    @State private var offset: CGSize = .zero
-    @State private var ticker: Timer?
-
-    private let radius: CGFloat = 52
-    private let deadzone: CGFloat = 8
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .fill(.ultraThinMaterial)
-                .overlay(Circle().stroke(.secondary.opacity(0.3), lineWidth: 1))
-
-            Circle()
-                .fill(.tint)
-                .frame(width: 44, height: 44)
-                .offset(offset)
-                .shadow(radius: 4, y: 2)
-        }
-        .frame(width: radius * 2, height: radius * 2)
-        .gesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { value in
-                    let raw = value.translation
-                    let magnitude = min(hypot(raw.width, raw.height), radius)
-                    let angle = atan2(raw.width, -raw.height)
-                    offset = CGSize(
-                        width: sin(angle) * magnitude,
-                        height: -cos(angle) * magnitude
-                    )
-                    startTicking()
-                }
-                .onEnded { _ in
-                    offset = .zero
-                    ticker?.invalidate()
-                    ticker = nil
-                }
-        )
-        .accessibilityLabel("Joystick de déplacement")
-    }
-
-    private func startTicking() {
-        guard ticker == nil else { return }
-        ticker = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            let magnitude = hypot(offset.width, offset.height)
-            guard magnitude > deadzone else { return }
-
-            var bearing = atan2(offset.width, -offset.height) * 180 / .pi
-            if bearing < 0 { bearing += 360 }
-
-            // Marche · course · véhicule
-            let speed: Double = switch magnitude / radius {
-            case ..<0.4: 1.4
-            case ..<0.75: 4.5
-            default: 13.0
-            }
-            onMove(bearing, speed)
-        }
-    }
-}
-
-// MARK: - Éléments d'état
-
-private struct SimulatedPin: View {
-    let active: Bool
-    var body: some View {
-        Circle()
-            .fill(active ? .blue : .gray)
-            .frame(width: 18, height: 18)
-            .overlay(Circle().stroke(.white, lineWidth: 3))
-            .shadow(radius: 3)
-    }
-}
+// MARK: -
 
 private struct DropConfirmation: View {
     let coordinate: CLLocationCoordinate2D
@@ -232,59 +229,38 @@ private struct DropConfirmation: View {
     let cancel: () -> Void
 
     var body: some View {
-        HStack {
+        HStack(spacing: PX.Space.snug) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Se téléporter ici")
-                    .font(.subheadline.weight(.medium))
-                Text(String(format: "%.5f, %.5f", coordinate.latitude, coordinate.longitude))
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
+                    .font(PX.Font.display(14, .semibold))
+                    .foregroundStyle(PX.Color.ink)
+                Text(String(format: "%+.5f · %+.5f", coordinate.latitude, coordinate.longitude))
+                    .font(PX.Font.mono(11.5))
+                    .monospacedDigit()
+                    .foregroundStyle(PX.Color.inkMuted)
             }
-            Spacer()
-            Button("Annuler", action: cancel).buttonStyle(.bordered)
-            Button("Y aller", action: confirm).buttonStyle(.borderedProminent)
-        }
-        .padding()
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-    }
-}
 
-/// Barre d'état. Un état dégradé se dit franchement : pendant la reprise, la
-/// vraie position est visible des autres apps, et masquer ce fait derrière un
-/// spinner neutre ferait prendre à l'utilisateur des décisions qu'il regretterait.
-private struct StatusBar: View {
-    let state: LocationEngine.State
+            Spacer(minLength: PX.Space.tight)
 
-    var body: some View {
-        HStack(spacing: 8) {
-            Circle().fill(color).frame(width: 8, height: 8)
-            Text(message).font(.footnote)
-            Spacer()
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(.regularMaterial, in: Capsule())
-    }
+            Button(action: cancel) {
+                Image(systemName: "xmark").font(.system(size: 13, weight: .semibold))
+                    .frame(width: 38, height: 38)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(PX.Color.inkMuted)
+            .background(Circle().fill(.white.opacity(0.06)))
 
-    private var color: Color {
-        switch state {
-        case .simulating: .green
-        case .degraded, .waitingForWiFi: .orange
-        case .failed: .red
-        default: .secondary
+            Button(action: confirm) {
+                Image(systemName: "arrow.right").font(.system(size: 15, weight: .semibold))
+                    .frame(width: 38, height: 38)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white)
+            .background(Circle().fill(PX.Color.azimuth))
+            .shadow(color: PX.Color.azimuth.opacity(0.4), radius: 10, y: 4)
         }
-    }
-
-    private var message: String {
-        switch state {
-        case .idle: "Touche la carte pour choisir un point."
-        case .mountingDDI: "Montage de l'image développeur…"
-        case .connecting: "Ouverture du canal…"
-        case .simulating: "Position simulée active."
-        case .degraded(let n): "Canal perdu — position réelle visible. Reprise (essai \(n))…"
-        case .waitingForWiFi: "Position réelle visible. Repasse en Wi-Fi pour reprendre."
-        case .failed(let why): why
-        }
+        .padding(PX.Space.base)
+        .glassCard(emphasis: true)
     }
 }
 
@@ -303,6 +279,11 @@ private enum MapStyleChoice: CaseIterable {
         switch self {
         case .standard: .standard(elevation: .realistic)
         case .hybrid: .hybrid(elevation: .realistic)
+        case .imagery: .imagery(elevation: .realistic)
+        }
+    }
+}
+brid: .hybrid(elevation: .realistic)
         case .imagery: .imagery(elevation: .realistic)
         }
     }

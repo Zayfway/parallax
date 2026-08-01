@@ -29,7 +29,7 @@ struct SideloadScreen: View {
 
     var body: some View {
         ZStack {
-            PX.Color.night.ignoresSafeArea()
+            PX.Color.canvas
 
             ScrollView {
                 VStack(spacing: PX.Space.snug) {
@@ -178,19 +178,6 @@ struct SideloadScreen: View {
 }
 
 // MARK: - Composants partagés
-
-struct SectionLabel: View {
-    let text: String
-    init(_ text: String) { self.text = text }
-
-    var body: some View {
-        Text(text.uppercased())
-            .font(PX.Font.mono(10, .semibold))
-            .tracking(1.0)
-            .foregroundStyle(PX.Color.inkFaint)
-    }
-}
-
 /// Segment maison plutôt que `Picker(.segmented)` : le contrôle système ne
 /// laisse pas assez de prise sur le rayon ni sur la police, et le résultat
 /// jurerait avec le reste. Le comportement, lui, reste identique.
@@ -222,6 +209,15 @@ struct SegmentedRow<T: Hashable>: View {
         .padding(3)
         .background(
             RoundedRectangle(cornerRadius: PX.Radius.control, style: .continuous)
+                .fill(PX.Color.night.opacity(0.55))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: PX.Radius.control, style: .continuous)
+                .strokeBorder(PX.Color.horizon, lineWidth: 1)
+        )
+    }
+}
+ctangle(cornerRadius: PX.Radius.control, style: .continuous)
                 .fill(PX.Color.night.opacity(0.55))
         )
         .overlay(

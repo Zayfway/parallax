@@ -2,13 +2,16 @@ import SwiftUI
 
 /// Coquille de l'app.
 ///
-/// Les trois premiers onglets reprennent la structure d'origine ; **Carte** est
-/// l'ajout du module GPS.
+/// `TabView` + `.tabItem` plutôt que le `Tab` moderne : ce dernier est réservé
+/// à iOS 18+, alors que la cible descend à 17.4 — RPPairing fonctionne dès
+/// cette version, et rien ne justifie de couper les utilisateurs d'iOS 17 pour
+/// une syntaxe d'onglets.
 ///
-/// Jumelage reste un onglet à part plutôt qu'une étape enfouie dans Installer,
-/// parce que le fichier RPPairing sert désormais **aux deux** modules. L'y
-/// enterrer laisserait croire qu'il ne concerne que le sideloading, alors qu'un
-/// utilisateur venu uniquement pour le GPS en a tout autant besoin.
+/// **La teinte de l'app suit l'état du spoof.** Quand la simulation est active,
+/// toute la barre d'onglets passe à l'ambre. C'est le seul endroit où la
+/// couleur signature déborde d'un écran : elle devient un signal global,
+/// visible même sur l'onglet Installer, pour qu'on ne puisse pas oublier que le
+/// GPS ment.
 struct RootView: View {
 
     @StateObject private var connection: DeviceConnection
@@ -22,21 +25,30 @@ struct RootView: View {
         _location = StateObject(wrappedValue: LocationEngine(connection: connection))
     }
 
+    private var live: Bool { location.state == .simulating }
+
     var body: some View {
         TabView {
             SideloadScreen()
                 .tabItem { Label("Installer", systemImage: "square.and.arrow.down") }
+
             PairingScreen()
                 .tabItem { Label("Jumelage", systemImage: "lock.iphone") }
+
             MapScreen()
                 .tabItem { Label("Carte", systemImage: "location.viewfinder") }
+
+            CertificatesScreen()
+                .tabItem { Label("Certificats", systemImage: "checkmark.seal") }
+
             SettingsScreen()
                 .tabItem { Label("Réglages", systemImage: "slider.horizontal.3") }
         }
         .environmentObject(connection)
         .environmentObject(pairing)
         .environmentObject(location)
-        .tint(location.state == .simulating ? PX.Color.signal : PX.Color.azimuth)
+        .tint(live ? PX.Color.signal : PX.Color.azimuth)
+        .animation(PX.Motion.settle, value: live)
         .task {
             pairing.observePIN()
             await connection.observeTunnel()
