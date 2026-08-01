@@ -235,7 +235,9 @@ struct PairingScreen: View {
         case .dormant:      "aucune diffusion"
         case .broadcasting: "en attente de l'appareil"
         case .code:         "saisis le code dans Réglages"
-        case .ready:        "prêt pour l'installation et le GPS"
+        case .ready:        "fichier obtenu — reste à établir le lien"
+        case .linking:      "pair-verify, puis tunnel chiffré"
+        case .linked(let count): "\(count) service(s) exposés par l'appareil"
         case .failed:       "voir le détail ci-dessous"
         }
     }
