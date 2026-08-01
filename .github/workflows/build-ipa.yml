@@ -86,7 +86,7 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             2>&1 | tee build.log
-          test -d build/Parallax.xcarchive || { tail -60 build.log; exit 1; }
+          test -d build/Parallax.xcarchive || { grep -E "error:" build.log | head -40; exit 1; }
 
       - name: Empaqueter l'IPA
         # Un IPA est un zip contenant un dossier Payload/ à la racine. Rien de plus.
