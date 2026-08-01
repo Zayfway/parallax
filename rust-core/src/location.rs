@@ -272,7 +272,7 @@ mod imp {
             let rsd: &'static mut RsdHandshake = unsafe { &mut *(raw.0 as *mut RsdHandshake) };
             let adapter: &'static mut AdapterHandle = unsafe { &mut *(raw_ad.0 as *mut AdapterHandle) };
 
-            let mut server = match RemoteServerClient::connect_rsd(adapter, rsd).await {
+            let mut server = match RemoteServerClient::<Box<dyn idevice::ReadWrite>>::connect_rsd(adapter, rsd).await {
                 Ok(s) => s,
                 Err(e) => { let _ = ready_tx.send(Err(format!("ouverture DVT : {e}"))); return; }
             };
