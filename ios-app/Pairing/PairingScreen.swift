@@ -11,17 +11,21 @@ import SwiftUI
 // Une seule chose doit être lisible d'un coup d'œil : où on en est.
 //
 //   gris      · rien ne se passe
-//   pervenche · diffusion en cours, l'appareil peut nous trouver
-//   vert      · fichier obtenu, terminé
+//   pervenche · en cours — diffusion, puis montage du lien
+//   vert      · lien établi, l'appareil répond
 //   rouge     · échec
 //
 // L'ambre n'apparaît **jamais** ici. Il est réservé à « position simulée
 // active », et une couleur signature qui déborde cesse d'être un signal.
 //
 // ── LE RAIL ───────────────────────────────────────────────────────────────
-// Trois étapes reliées par un trait qui se remplit. On ne numérote pas pour
+// Quatre étapes reliées par un trait qui se remplit. On ne numérote pas pour
 // décorer : à chaque instant, une seule étape est allumée, les autres sont
 // éteintes. C'est ce qui dit « tu es ici » sans une ligne de texte.
+//
+// La quatrième — établir le lien — n'existait pas au départ, et son absence
+// était un piège : le fichier de jumelage était écrit, l'écran affichait
+// « terminé », et rien dans l'app ne s'en servait jamais.
 // ═══════════════════════════════════════════════════════════════════════════
 
 struct PairingScreen: View {
@@ -30,14 +34,22 @@ struct PairingScreen: View {
     @EnvironmentObject private var connection: DeviceConnection
 
     @State private var shown = false
+    @State private var isLinking = false
+    @State private var linkError: String?
 
     // MARK: - Phase
 
+    /// Le jumelage ne s'arrête pas au fichier écrit : tant que le tunnel n'est
+    /// pas monté, ce fichier ne sert à rien. `.linking` et `.linked` prolongent
+    /// donc la machine jusqu'au lien réellement établi, qui est l'état à partir
+    /// duquel installation et GPS deviennent possibles.
     enum Phase {
         case dormant        // rien n'a commencé
         case broadcasting   // on diffuse, l'appareil ne s'est pas encore manifesté
         case code(String)   // le PIN est là, l'utilisateur doit filer dans Réglages
-        case ready          // fichier de jumelage obtenu
+        case ready          // fichier de jumelage obtenu, lien pas encore monté
+        case linking        // pair-verify, TLS-PSK, poignée RSD en cours
+        case linked(Int)    // lien vivant, n services RSD annoncés
         case failed(String)
 
         var step: Int {
@@ -45,7 +57,8 @@ struct PairingScreen: View {
             case .dormant, .failed: 0
             case .broadcasting:     1
             case .code:             2
-            case .ready:            4
+            case .ready, .linking:  4
+            case .linked:           5
             }
         }
 
@@ -54,7 +67,9 @@ struct PairingScreen: View {
             case .dormant:      PX.Color.inkFaint
             case .broadcasting: PX.Color.azimuth
             case .code:         PX.Color.azimuth
-            case .ready:        PX.Color.verdant
+            case .ready:        PX.Color.azimuth
+            case .linking:      PX.Color.azimuth
+            case .linked:       PX.Color.verdant
             case .failed:       PX.Color.alert
             }
         }
@@ -65,6 +80,8 @@ struct PairingScreen: View {
             case .broadcasting: "Diffusion"
             case .code:         "Code affiché"
             case .ready:        "Fichier prêt"
+            case .linking:      "Montage du lien"
+            case .linked:       "Lien établi"
             case .failed:       "Échec"
             }
         }
@@ -74,18 +91,38 @@ struct PairingScreen: View {
             case .dormant:      "moon.zzz"
             case .broadcasting: "dot.radiowaves.left.and.right"
             case .code:         "number"
-            case .ready:        "checkmark.seal.fill"
+            case .ready:        "doc.badge.checkmark"
+            case .linking:      "link.badge.plus"
+            case .linked:       "checkmark.seal.fill"
             case .failed:       "exclamationmark.triangle.fill"
             }
         }
     }
 
     private var phase: Phase {
-        if let error = pairing.lastError { return .failed(error) }
+        if let error = linkError ?? pairing.lastError { return .failed(error) }
+        if !connection.services.isEmpty { return .linked(connection.services.count) }
+        if isLinking { return .linking }
         if let pin = pairing.pin { return .code(pin) }
         if pairing.isRunning { return .broadcasting }
         if pairing.hasFile { return .ready }
         return .dormant
+    }
+
+    /// Monte le tunnel. Le premier geste de toute la chaîne qui parle
+    /// réellement à l'appareil par RSD.
+    private func establishLink() async {
+        guard !isLinking else { return }
+        withAnimation(PX.Motion.settle) { isLinking = true; linkError = nil }
+        defer { withAnimation(PX.Motion.settle) { isLinking = false } }
+
+        do {
+            let services = try await connection.connect()
+            withAnimation(PX.Motion.acquire) { linkError = nil }
+            LogBridge.shared.note("lien établi — \(services.count) service(s) RSD")
+        } catch {
+            withAnimation(PX.Motion.settle) { linkError = error.localizedDescription }
+        }
     }
 
     // MARK: - Corps
@@ -137,6 +174,9 @@ struct PairingScreen: View {
         .animation(PX.Motion.acquire, value: pairing.pin)
         .animation(PX.Motion.settle, value: pairing.hasFile)
         .animation(PX.Motion.settle, value: pairing.lastError)
+        .animation(PX.Motion.acquire, value: connection.services.count)
+        .animation(PX.Motion.settle, value: isLinking)
+        .animation(PX.Motion.settle, value: linkError)
         .onAppear { shown = true }
     }
 
@@ -255,6 +295,9 @@ struct PairingScreen: View {
             connector(filled: phase.step >= 3)
             step(3, "Saisir le code",
                  "Recopie les six chiffres dans la demande affichée par Réglages.")
+            connector(filled: phase.step >= 5)
+            step(4, "Établir le lien",
+                 "Parallax monte le tunnel jusqu'aux services de l'appareil. C'est ce lien qu'utilisent l'installation et le GPS.")
         }
         .padding(PX.Space.base)
         .glassCard()
@@ -304,6 +347,36 @@ struct PairingScreen: View {
         .animation(PX.Motion.settle, value: phase.step)
     }
 
+    /// Ce que l'appareil annonce, mot pour mot. En mono parce que rien ici
+    /// n'a été reformulé pour l'humain : ce sont les noms de service et les
+    /// ports que RSD a rendus.
+    private var servicesCard: some View {
+        VStack(alignment: .leading, spacing: PX.Space.tight) {
+            HStack {
+                SectionLabel("Services RSD")
+                Spacer()
+                Tag("\(connection.services.count)", color: PX.Color.verdant,
+                    icon: "checkmark.circle.fill")
+            }
+
+            ForEach(connection.services.sorted(by: { $0.key < $1.key }), id: \.key) { name, port in
+                HStack(alignment: .top, spacing: PX.Space.tight) {
+                    Text(name)
+                        .font(PX.Font.mono(10.5))
+                        .foregroundStyle(PX.Color.inkMuted)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                    Spacer(minLength: PX.Space.tight)
+                    Text("\(port)")
+                        .font(PX.Font.mono(10.5, .semibold))
+                        .foregroundStyle(PX.Color.inkFaint)
+                }
+            }
+        }
+        .padding(PX.Space.base)
+        .glassCard()
+    }
+
     /// Le trait qui relie deux étapes. Il se remplit vers le bas : c'est le
     /// seul endroit où la progression est représentée comme un mouvement.
     private func connector(filled: Bool) -> some View {
@@ -321,14 +394,43 @@ struct PairingScreen: View {
         switch phase {
         case .ready:
             VStack(spacing: PX.Space.tight) {
+                Button {
+                    Task { await establishLink() }
+                } label: {
+                    Label("Établir le lien", systemImage: "link")
+                }
+                .buttonStyle(ProminentButtonStyle())
+
                 ShareLink(item: PairingStore.fileURL) {
                     Label("Exporter le fichier", systemImage: "square.and.arrow.up")
                 }
-                .buttonStyle(ProminentButtonStyle())
+                .buttonStyle(SecondaryButtonStyle())
+
                 Button {
                     Task { await pairing.start() }
                 } label: {
                     Label("Rejumeler", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+            }
+
+        case .linking:
+            HStack(spacing: PX.Space.tight) {
+                ProgressView().tint(PX.Color.azimuth)
+                Text("pair-verify · TLS-PSK · RSD")
+                    .font(PX.Font.mono(11))
+                    .foregroundStyle(PX.Color.inkMuted)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, PX.Space.base)
+
+        case .linked:
+            VStack(spacing: PX.Space.tight) {
+                servicesCard
+                Button {
+                    connection.releaseTunnel()
+                } label: {
+                    Label("Fermer le lien", systemImage: "link.badge.plus")
                 }
                 .buttonStyle(SecondaryButtonStyle())
             }
@@ -343,6 +445,26 @@ struct PairingScreen: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
             .glassCard(radius: PX.Radius.control)
+
+        case .failed where linkError != nil:
+            // Le lien a échoué, pas le jumelage : le fichier reste bon, on
+            // renvoie donc vers un nouvel essai de lien et non vers Réglages.
+            VStack(spacing: PX.Space.tight) {
+                Button {
+                    Task { await establishLink() }
+                } label: {
+                    Label("Réessayer le lien", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(ProminentButtonStyle())
+
+                Button {
+                    withAnimation(PX.Motion.settle) { linkError = nil }
+                    Task { await pairing.start() }
+                } label: {
+                    Label("Rejumeler", systemImage: "dot.radiowaves.left.and.right")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+            }
 
         default:
             Button {
