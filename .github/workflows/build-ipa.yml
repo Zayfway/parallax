@@ -18,7 +18,7 @@ on:
         required: false
         default: ""
         type: choice
-        options: ["", "device-location", "device"]
+        options: ["", "device-pairing,device-account", "device"]
 
 jobs:
   build:
@@ -56,11 +56,11 @@ jobs:
           restore-keys: cargo-${{ runner.os }}-
 
       - name: Construire le xcframework
-        run: ./build-rust.sh "${{ inputs.features || 'device-pairing,device-account' }}"
+        run: ./build-rust.sh "${{ inputs.features || 'device' }}"
 
       - name: Vérifier l'absence de symboles dupliqués
-        # Avec --features device, idevice 0.1.61 (via isideload) et 0.1.63 (git)
-        # coexistent. Ils doivent rester des crates distincts. Si ce test casse,
+        # Avec --features device, idevice 0.1.65 (via isideload, crates.io) et
+        # 0.1.63 (git, revision epinglee) coexistent. Ils doivent rester des crates distincts. Si ce test casse,
         # la résolution de features les a fusionnés, et le link échouera plus
         # loin avec un message bien moins clair.
         run: |
@@ -116,6 +116,6 @@ jobs:
             IPA **non signé**. Installe-le via SideStore, AltStore ou Feather —
             ils le re-signeront avec ton certificat.
 
-            Profil du cœur natif : `${{ inputs.features || 'stub' }}`.
+            Profil du cœur natif : `${{ inputs.features || 'device' }}`.
             En profil stub, l'interface est complète mais aucune opération sur
             l'appareil n'aboutit. Voir Réglages › Version.

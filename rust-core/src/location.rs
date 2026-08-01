@@ -227,6 +227,7 @@ mod imp {
     use idevice::rsd::RsdHandshake;
     use idevice::tcp::handle::AdapterHandle;
     use idevice::RsdService;
+    use idevice::provider::RsdProvider;
     use std::ffi::c_void;
     use tokio::sync::{mpsc, oneshot};
 
@@ -252,7 +253,23 @@ mod imp {
     struct SendPtr(*mut c_void);
     unsafe impl Send for SendPtr {}
 
-    pub unsafe fn ddi_is_mounted(_p: *mut c_void) -> i32 { crate::PX_OK }
+    /// Le service Instruments n'est annonce par RSD qu'une fois la DDI
+    /// montee : sa presence dans la liste *est* la reponse. Aucun appel
+    /// reseau, contrairement a un montage speculatif.
+    pub unsafe fn ddi_is_mounted(rsd: *mut c_void) -> i32 {
+        if rsd.is_null() {
+            crate::set_last_error("px_ddi_is_mounted : poignee RSD nulle");
+            return crate::PX_ERR_ARG;
+        }
+        let rsd: &RsdHandshake = unsafe { &*(rsd as *const RsdHandshake) };
+        let name = <RemoteServerClient<Box<dyn idevice::ReadWrite>> as RsdService>::rsd_service_name();
+        if rsd.services.contains_key(name.as_ref()) {
+            crate::PX_OK
+        } else {
+            crate::set_last_error("image developpeur non montee : service Instruments absent de RSD");
+            crate::PX_ERR_DDI_NOT_MOUNTED
+        }
+    }
     pub unsafe fn ddi_mount(_p: *mut c_void, _i: &str, _m: &str) -> i32 { crate::PX_OK }
 
     pub unsafe fn open(adapter: *mut c_void, ptr: *mut c_void) -> Result<Session, String> {
@@ -272,10 +289,32 @@ mod imp {
             let rsd: &'static mut RsdHandshake = unsafe { &mut *(raw.0 as *mut RsdHandshake) };
             let adapter: &'static mut AdapterHandle = unsafe { &mut *(raw_ad.0 as *mut AdapterHandle) };
 
-            let mut server = match RemoteServerClient::<Box<dyn idevice::ReadWrite>>::connect_rsd(adapter, rsd).await {
-                Ok(s) => s,
-                Err(e) => { let _ = ready_tx.send(Err(format!("ouverture DVT : {e}"))); return; }
+            // On contourne `connect_rsd`. Son corps appelle `handshake.connect::<T>()`
+            // avec `T: RsdService` générique, et la contrainte remonte en
+            // « implementation of RsdService is not general enough » dès que le
+            // futur passe par `runtime.spawn`. Ni `&'static mut` ni un turbofish
+            // avec `+ 'static` n'y changent quoi que ce soit : la contrainte est
+            // d'ordre supérieur et naît *dans* le corps, pas à l'appel.
+            //
+            // `rsd.services` étant public, on fait nous-mêmes les deux gestes que
+            // `connect_rsd` enchaîne : chercher le port, ouvrir le flux.
+            let name = <RemoteServerClient<Box<dyn idevice::ReadWrite>> as RsdService>::rsd_service_name().to_string();
+            let port = match rsd.services.get(&name) {
+                Some(s) => s.port,
+                None => {
+                    // Ce service n'apparaît qu'une fois la DDI montée : c'est
+                    // exactement le diagnostic utile, autant le dire ici.
+                    let _ = ready_tx.send(Err(format!(
+                        "service {name} absent de RSD — image développeur non montée"
+                    )));
+                    return;
+                }
             };
+            let stream = match adapter.connect_to_service_port(port).await {
+                Ok(s) => s,
+                Err(e) => { let _ = ready_tx.send(Err(format!("connexion au port {port} : {e}"))); return; }
+            };
+            let mut server = RemoteServerClient::new(stream);
             let mut client = match LocationSimulationClient::new(&mut server).await {
                 Ok(c) => c,
                 Err(e) => { let _ = ready_tx.send(Err(format!("canal LocationSimulation : {e}"))); return; }

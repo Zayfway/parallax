@@ -41,10 +41,21 @@ final class DeviceConnection: ObservableObject {
     /// réglages, car certaines configurations réseau l'attribuent autrement.
     @AppStorage("deviceIP") var deviceIP: String = "10.7.0.1"
 
-    /// Handle RSD opaque, propriété du cœur Rust.
-    /// `nil` tant que `connect()` n'a pas réussi.
+    /// Tunnel détenu par Rust. Propriétaire de l'adaptateur, de la poignée RSD
+    /// et du runtime qui les pilote — d'où un seul pointeur à libérer.
+    private var tunnelHandle: OpaquePointer?
+
+    /// Adaptateur et poignée RSD, **empruntés** au tunnel. Ils cessent d'être
+    /// valides dès que `tunnelHandle` est libéré : jamais de `free` dessus.
+    private(set) var adapterHandle: UnsafeMutableRawPointer?
     private(set) var rsdHandle: UnsafeMutableRawPointer?
 
+    /// Services annoncés par RSD. C'est la preuve que le lien est vivant, et
+    /// la réponse à « la DDI est-elle montée ? » sans aucun appel réseau.
+    @Published private(set) var services: [String: Int] = [:]
+
+    /// Non isolé : voir l'en-tête de `RemotePairingBrowser`.
+    private let browser = RemotePairingBrowser()
     private var ddiVerified = false
 
     struct DeviceInfo: Equatable {
@@ -118,20 +129,31 @@ final class DeviceConnection: ObservableObject {
     enum ConnectionError: LocalizedError {
         case noTunnel
         case noPairing
+        case noService
         case handshakeFailed(String)
 
         var errorDescription: String? {
             switch self {
             case .noTunnel:  "Ouvre LocalDevVPN et touche Connect."
             case .noPairing: "Aucun fichier de jumelage. Passe par l'onglet Jumelage."
+            case .noService:
+                "Service de jumelage introuvable sur le réseau local. Vérifie que le mode développeur est actif et que l'autorisation Réseau local est accordée dans Réglages › Parallax."
             case .handshakeFailed(let why): why
             }
         }
     }
 
+    /// Monte le tunnel : découverte Bonjour, pair-verify, TLS-PSK, poignée RSD.
+    ///
+    /// Découpage volontaire — Swift résout l'adresse, Rust parle le protocole.
+    /// Voir l'en-tête de `RemotePairingBrowser` pour pourquoi la découverte ne
+    /// peut pas descendre dans Rust.
     @discardableResult
-    func connect() async throws -> DeviceInfo {
-        guard tunnelState.isConnected else { throw ConnectionError.noTunnel }
+    func connect() async throws -> [String: Int] {
+        if let existing = tunnelHandle, !services.isEmpty {
+            _ = existing
+            return services
+        }
 
         // Refuse d'appeler idevice sans fichier valide. Sans ce garde-fou, un
         // fichier absent remonte en `Socket(ENOENT)` — qui ressemble à un échec
@@ -139,17 +161,59 @@ final class DeviceConnection: ObservableObject {
         let path = PairingStore.fileURL.path
         try FFI.check(px_pairing_validate(path))
 
-        // TODO — brancher tunnel_create_rppairing + lockdownd_get_value une fois
-        // les signatures d'idevice confirmées. Voir README, étapes 3 et 4.
-        throw ConnectionError.handshakeFailed(
-            "Connexion native non compilée. Active --features device-pairing."
-        )
+        // Découverte Bonjour puis montage du tunnel, tous deux bloquants, dans
+        // le même saut hors du pool coopératif.
+        let browser = self.browser
+        let handle: OpaquePointer = try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                guard let endpoint = browser.discover() else {
+                    continuation.resume(throwing: ConnectionError.noService)
+                    return
+                }
+
+                let result = path.withCString { p in
+                    endpoint.host.withCString { h in
+                        px_tunnel_connect(p, h, endpoint.port)
+                    }
+                }
+                if let result {
+                    continuation.resume(returning: result)
+                } else {
+                    continuation.resume(throwing: ConnectionError.handshakeFailed(
+                        FFI.lastError ?? "Le tunnel n'a pas pu être établi."
+                    ))
+                }
+            }
+        }
+
+        releaseTunnel()
+        tunnelHandle = handle
+        adapterHandle = UnsafeMutableRawPointer(px_tunnel_adapter(handle))
+        rsdHandle = UnsafeMutableRawPointer(px_tunnel_rsd(handle))
+
+        let discovered = FFI.tunnelServices(tunnel: handle)
+        services = discovered
+        ddiVerified = false
+        LogBridge.shared.note("tunnel établi — \(discovered.count) service(s) RSD")
+        return discovered
     }
 
-    /// Reconnecte si le handle est tombé. Appelé par le superviseur GPS.
+    /// Reconnecte si le tunnel est tombé. Appelé par le superviseur GPS.
     func reconnectIfNeeded() async throws {
-        guard rsdHandle == nil else { return }
+        guard tunnelHandle == nil else { return }
         try await connect()
+    }
+
+    /// Libère le tunnel. Toute session GPS doit avoir été fermée avant : elle
+    /// emprunte l'adaptateur et la poignée RSD que ceci détruit.
+    func releaseTunnel() {
+        guard let handle = tunnelHandle else { return }
+        tunnelHandle = nil
+        adapterHandle = nil
+        rsdHandle = nil
+        services = [:]
+        ddiVerified = false
+        px_tunnel_free(handle)
     }
 
     // MARK: - DDI
