@@ -86,6 +86,24 @@ pub extern "C" fn px_last_error() -> *const c_char {
     }
 }
 
+/// Exécute `f` en interceptant les paniques.
+///
+/// Une panique qui traverse la frontière FFI devient un `abort` : l'app meurt
+/// sans message, sans journal, sans rien à montrer à l'utilisateur. Toute
+/// entrée qui appelle du code `imp::` doit passer par ici.
+///
+/// `AssertUnwindSafe` est assumé : on ne reprend jamais l'exécution sur l'état
+/// qui a paniqué, on rend une valeur de repli et on remonte l'erreur.
+pub(crate) fn guard<T>(name: &str, fallback: T, f: impl FnOnce() -> T) -> T {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(value) => value,
+        Err(_) => {
+            set_last_error(format!("{name} : panique interne du cœur natif"));
+            fallback
+        }
+    }
+}
+
 /// Lit une chaîne C en `String`, ou `None` si nulle ou non-UTF-8.
 ///
 /// # Safety

@@ -86,6 +86,10 @@ extension FFI {
         let status: String
         /// `nil` quand Apple ne donne pas de date.
         let expiry: Date?
+        /// Nombre d'emplacements qu'Apple déclare pour ce type de certificat.
+        /// `nil` quand il ne le renseigne pas. C'est la seule source honnête :
+        /// trois vaut pour un compte gratuit, pas pour un compte payant.
+        let maxActiveCerts: Int?
 
         /// Le numéro de série est ce que `px_cert_revoke` attend ; s'il manque,
         /// on retombe sur l'identifiant pour garder la liste stable à l'écran.
@@ -143,6 +147,21 @@ extension FFI {
         try check(serial.withCString { px_cert_revoke(session, $0) })
     }
 
+    /// Récupère le certificat de cette machine, ou en demande un neuf à Apple.
+    /// Rend son numéro de série.
+    ///
+    /// Idempotent : appeler deux fois ne crée pas deux certificats.
+    ///
+    /// **Bloquant** — même règle que `certificates(session:)`.
+    @discardableResult
+    static func createCertificate(session: OpaquePointer) throws -> String {
+        guard let raw = px_cert_create(session) else {
+            throw Failure(code: PX_ERR_INTERNAL, detail: lastError)
+        }
+        defer { px_string_free(raw) }
+        return String(cString: raw)
+    }
+
     /// Miroir exact de `CertInfo` (`account.rs`). Séparé du modèle exposé pour
     /// que la conversion de date reste au même endroit que le format qui la
     /// produit — `to_xml_format`, donc ISO 8601 en UTC.
@@ -153,12 +172,14 @@ extension FFI {
         let certificateID: String
         let status: String
         let expiration: String
+        let maxActiveCerts: Int?
 
         enum CodingKeys: String, CodingKey {
             case name, status, expiration
             case serialNumber = "serial_number"
             case machineName = "machine_name"
             case certificateID = "certificate_id"
+            case maxActiveCerts = "max_active_certs"
         }
 
         func certificate(parsingDatesWith dates: ISO8601DateFormatter) -> Certificate {
@@ -168,7 +189,8 @@ extension FFI {
                 machineName: machineName,
                 certificateID: certificateID,
                 status: status,
-                expiry: expiration.isEmpty ? nil : dates.date(from: expiration)
+                expiry: expiration.isEmpty ? nil : dates.date(from: expiration),
+                maxActiveCerts: maxActiveCerts
             )
         }
     }

@@ -44,6 +44,15 @@ final class AppleAccountModel: ObservableObject {
     @Published private(set) var certificates: Certificates = .idle
     /// Numéro de série en cours de révocation, pour n'immobiliser que sa carte.
     @Published private(set) var revoking: String?
+    @Published private(set) var isCreatingCertificate = false
+
+    /// Emplacements déclarés par Apple, quand il les déclare. Tous les
+    /// certificats d'un même type portent la même valeur ; on prend le maximum
+    /// pour ignorer ceux où le champ manque.
+    var certificateQuota: Int? {
+        guard case .loaded(let list) = certificates else { return nil }
+        return list.compactMap(\.maxActiveCerts).max()
+    }
 
     /// Session `PxSignSession` détenue par Rust. Reste privée : l'écran
     /// Certificats passe par ce modèle plutôt que d'ouvrir une seconde
@@ -158,6 +167,28 @@ final class AppleAccountModel: ObservableObject {
         do {
             try await onBackground { try FFI.revokeCertificate(session: session, serial: serial) }
             LogBridge.shared.note("certificat \(serial) révoqué")
+            await loadCertificates()
+        } catch {
+            withAnimation(PX.Motion.settle) {
+                certificates = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    /// Demande un certificat à Apple, puis recharge la liste.
+    ///
+    /// Idempotent côté Rust : s'il en existe déjà un qui correspond à la clé
+    /// privée locale, il est réutilisé. Le bouton reste donc sans danger même
+    /// si l'utilisateur le touche deux fois.
+    func createCertificate() async {
+        guard let session, !isCreatingCertificate else { return }
+
+        withAnimation(PX.Motion.settle) { isCreatingCertificate = true }
+        defer { withAnimation(PX.Motion.settle) { isCreatingCertificate = false } }
+
+        do {
+            let serial = try await onBackground { try FFI.createCertificate(session: session) }
+            LogBridge.shared.note("certificat prêt : \(serial)")
             await loadCertificates()
         } catch {
             withAnimation(PX.Motion.settle) {

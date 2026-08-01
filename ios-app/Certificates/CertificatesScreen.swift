@@ -9,10 +9,11 @@ import SwiftUI
 ///
 /// L'écran liste donc ce qu'Apple déclare réellement, et permet de révoquer.
 ///
-/// **Aucun quota n'est affiché.** La limite de trois vaut pour les comptes
-/// gratuits, pas pour les comptes payants, et `list_ios_certs` ne renvoie pas
-/// le plafond applicable. Annoncer un chiffre qu'on ne tient pas d'Apple serait
-/// faux une fois sur deux ; on montre le décompte, et rien de plus.
+/// **Le quota vient d'Apple, jamais du code.** La limite de trois vaut pour un
+/// compte gratuit et pas pour un compte payant ; l'écrire en dur serait faux
+/// une fois sur deux. Apple renseigne `maxActiveCerts` dans le type de
+/// certificat — on affiche ce chiffre-là quand il est présent, et le simple
+/// décompte quand il ne l'est pas.
 ///
 /// Révoquer casse les apps déjà signées avec le certificat — l'avertissement
 /// est donc dans la confirmation, pas en note de bas de page.
@@ -75,6 +76,11 @@ struct CertificatesScreen: View {
         case .idle, .loading:      return "lecture…"
         case .failed:              return "erreur"
         case .loaded(let list):
+            // Le quota vient d'Apple (`maxActiveCerts`) ou n'est pas affiché.
+            // Rien n'est codé en dur : trois vaut pour un compte gratuit.
+            if let quota = account.certificateQuota {
+                return "\(list.count) / \(quota) emplacements"
+            }
             switch list.count {
             case 0:  return "aucun certificat"
             case 1:  return "1 certificat"
@@ -116,7 +122,7 @@ struct CertificatesScreen: View {
 
     private var isBusy: Bool {
         if case .loading = account.certificates { return true }
-        return account.revoking != nil
+        return account.revoking != nil || account.isCreatingCertificate
     }
 
     // MARK: - Contenu
@@ -150,22 +156,47 @@ struct CertificatesScreen: View {
                 .appear(2, shown)
 
             case .loaded(let list) where list.isEmpty:
-                notice(
-                    icon: "checkmark.seal",
-                    title: "Aucun certificat",
-                    detail: "Apple en créera un à la première signature.",
-                    tint: PX.Color.inkFaint
-                )
+                VStack(spacing: PX.Space.snug) {
+                    notice(
+                        icon: "checkmark.seal",
+                        title: "Aucun certificat",
+                        detail: "Génère-en un maintenant, ou laisse la première installation s'en charger.",
+                        tint: PX.Color.inkFaint
+                    )
+                    createButton
+                }
                 .appear(2, shown)
 
             case .loaded(let list):
+                createButton.appear(2, shown)
                 // Un seul paramètre de fermeture : la décomposition d'un tuple
                 // en deux arguments ne passe pas le vérificateur de types.
                 ForEach(Array(list.enumerated()), id: \.element.id) { pair in
-                    card(pair.element).appear(pair.offset + 2, shown)
+                    card(pair.element).appear(pair.offset + 3, shown)
                 }
             }
         }
+    }
+
+    /// Action principale de l'écran, donc `ProminentButtonStyle` — et il n'y
+    /// en a qu'une. Pervenche : opération en cours, jamais l'ambre.
+    private var createButton: some View {
+        Button {
+            Task { await account.createCertificate() }
+        } label: {
+            HStack(spacing: PX.Space.tight) {
+                if account.isCreatingCertificate {
+                    ProgressView().tint(.white)
+                } else {
+                    Image(systemName: "plus.viewfinder")
+                }
+                Text(account.isCreatingCertificate
+                     ? "Demande à Apple…"
+                     : "Générer un certificat")
+            }
+        }
+        .buttonStyle(ProminentButtonStyle(enabled: !isBusy))
+        .disabled(isBusy)
     }
 
     private var loading: some View {
