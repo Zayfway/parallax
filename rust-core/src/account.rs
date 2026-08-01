@@ -137,40 +137,69 @@ pub unsafe extern "C" fn px_sign_session_free(session: *mut PxSignSession) {
 #[cfg(feature = "device-account")]
 mod imp {
     use super::PxTwoFactorCallback;
+    use isideload::anisette::remote_v3::RemoteV3AnisetteProvider;
+    use isideload::auth::apple_account::{
+        AppleAccount, TwoFactorCallbackParams, TwoFactorCallbackResponse,
+    };
+    use isideload::dev::developer_session::DeveloperSession;
+    use isideload::sideload::sideloader::Sideloader;
+    use isideload::sideload::{SideloaderBuilder, TeamSelection};
+    use isideload::util::fs_storage::FsStorage;
+    use isideload::util::storage::InMemoryStorage;
     use std::ffi::CStr;
+    use std::path::PathBuf;
 
     pub struct Session {
-        pub sideloader: isideload::Sideloader,
+        pub sideloader: Sideloader,
         pub runtime: tokio::runtime::Runtime,
     }
 
     pub fn sign_in(
-        email: &str, password: &str, anisette: &str, storage: &str,
+        email: &str, password: &str, _anisette: &str, storage: &str,
         on_2fa: PxTwoFactorCallback,
     ) -> Result<Session, String> {
         let runtime = tokio::runtime::Runtime::new()
             .map_err(|e| format!("runtime tokio : {e}"))?;
 
-        let sideloader = runtime.block_on(async {
-            let account = isideload::AppleAccount::builder()
-                .anisette_provider(isideload::anisette::RemoteV3::new(anisette))
-                .login(email, password, || {
-                    // Pont bloquant vers l'invite Swift.
+        let email = email.to_string();
+        let password = password.to_string();
+        let storage_path = PathBuf::from(storage);
+
+        let sideloader = runtime.block_on(async move {
+            let anisette = RemoteV3AnisetteProvider::default()
+                .map_err(|e| format!("anisette : {e}"))?
+                .set_storage(Box::new(InMemoryStorage::new()));
+
+            let mut account = AppleAccount::builder(&email)
+                .anisette_provider(anisette)
+                .login(&password, Box::new(move |_p: TwoFactorCallbackParams| {
                     let ptr = on_2fa();
-                    if ptr.is_null() { return None; }
-                    unsafe { CStr::from_ptr(ptr) }.to_str().ok().map(str::to_owned)
-                })
-                .await?;
+                    let code = if ptr.is_null() {
+                        String::new()
+                    } else {
+                        unsafe { CStr::from_ptr(ptr) }.to_str().unwrap_or("").to_owned()
+                    };
+                    TwoFactorCallbackResponse::SubmitCode(code)
+                }))
+                .await
+                .map_err(|e| format!("connexion Apple : {e}"))?;
 
-            let dev = isideload::DeveloperSession::from_account(&account)?;
-            isideload::SideloaderBuilder::new(dev)
-                .team(isideload::TeamSelector::First)
-                .storage(isideload::FsStorage::new(storage))
-                .machine_name("Parallax")
-                .build()
-        }).map_err(|e| format!("connexion Apple : {e}"))?;
+            let dev = DeveloperSession::from_account(&mut account)
+                .await
+                .map_err(|e| format!("session developpeur : {e}"))?;
 
-        tracing::info!("compte Apple connecté");
+            Ok::<_, String>(
+                SideloaderBuilder::new(dev, email.clone())
+                    .team_selection(TeamSelection::PromptOnce(|teams| {
+                        teams.first().map(|t| t.team_id.clone())
+                    }))
+                    .storage(Box::new(FsStorage::new(storage_path)))
+                    .machine_name("Parallax".to_string())
+                    .build(),
+            )
+        })?;
+
+        tracing::info!("compte Apple connecte");
         Ok(Session { sideloader, runtime })
     }
 
