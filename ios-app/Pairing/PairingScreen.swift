@@ -1,405 +1,233 @@
-import SwiftUI
+import AVFoundation
+import Foundation
+import Network
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ONGLET JUMELAGE
+// CONTRÔLEUR DE JUMELAGE
 //
-// La difficulté de cet écran n'est pas technique, elle est d'attention :
-// l'utilisateur doit **quitter l'app au milieu de l'opération**, retenir six
-// chiffres, naviguer dans Réglages, et revenir. Tout est organisé pour ça.
+// Répartition des rôles, apprise à la dure :
 //
-// ── LA COULEUR PORTE L'AVANCEMENT ─────────────────────────────────────────
-// Une seule chose doit être lisible d'un coup d'œil : où on en est.
+//   Rust  · lie le socket TCP, mène le protocole RPPairing, écrit le fichier
+//   Swift · demande l'autorisation réseau local, **annonce le service en
+//           Bonjour**, garde l'app vivante
 //
-//   gris      · rien ne se passe
-//   pervenche · diffusion en cours, l'appareil peut nous trouver
-//   vert      · fichier obtenu, terminé
-//   rouge     · échec
+// L'annonce ne peut pas être faite depuis Rust. Une bibliothèque mDNS pure
+// publie les adresses de toutes les interfaces — sur un iPhone il y en a cinq,
+// dont le tunnel VPN et le cellulaire — et iOS finit par tenter une adresse
+// injoignable. `NetService` passe par le démon système, qui sait laquelle
+// annoncer. Le symptôme d'une annonce faite en Rust : l'entrée apparaît bien
+// dans Réglages, mais reste grise avec un rouet, et `accept()` n'est jamais
+// atteint.
 //
-// L'ambre n'apparaît **jamais** ici. Il est réservé à « position simulée
-// active », et une couleur signature qui déborde cesse d'être un signal.
-//
-// ── LE RAIL ───────────────────────────────────────────────────────────────
-// Trois étapes reliées par un trait qui se remplit. On ne numérote pas pour
-// décorer : à chaque instant, une seule étape est allumée, les autres sont
-// éteintes. C'est ce qui dit « tu es ici » sans une ligne de texte.
+// Rust rend donc le port et les enregistrements TXT dès qu'il écoute, et
+// Swift publie.
 // ═══════════════════════════════════════════════════════════════════════════
 
-struct PairingScreen: View {
+@MainActor
+final class PairingController: NSObject, ObservableObject {
 
-    @EnvironmentObject private var pairing: PairingController
-    @EnvironmentObject private var connection: DeviceConnection
+    @Published private(set) var pin: String?
+    @Published private(set) var isRunning = false
+    @Published private(set) var lastError: String?
+    @Published private(set) var hasFile = PairingStore.exists
 
-    @State private var shown = false
+    private let connection: DeviceConnection
+    private var netService: NetService?
+    private var keepAlive: AVAudioPlayer?
 
-    // MARK: - Phase
-
-    enum Phase {
-        case dormant        // rien n'a commencé
-        case broadcasting   // on diffuse, l'appareil ne s'est pas encore manifesté
-        case code(String)   // le PIN est là, l'utilisateur doit filer dans Réglages
-        case ready          // fichier de jumelage obtenu
-        case failed(String)
-
-        var step: Int {
-            switch self {
-            case .dormant, .failed: 0
-            case .broadcasting:     1
-            case .code:             2
-            case .ready:            3
-            }
-        }
-
-        var tint: Color {
-            switch self {
-            case .dormant:      PX.Color.inkFaint
-            case .broadcasting: PX.Color.azimuth
-            case .code:         PX.Color.azimuth
-            case .ready:        PX.Color.verdant
-            case .failed:       PX.Color.alert
-            }
-        }
-
-        var label: String {
-            switch self {
-            case .dormant:      "En veille"
-            case .broadcasting: "Diffusion"
-            case .code:         "Code affiché"
-            case .ready:        "Fichier prêt"
-            case .failed:       "Échec"
-            }
-        }
-
-        var icon: String {
-            switch self {
-            case .dormant:      "moon.zzz"
-            case .broadcasting: "dot.radiowaves.left.and.right"
-            case .code:         "number"
-            case .ready:        "checkmark.seal.fill"
-            case .failed:       "exclamationmark.triangle.fill"
-            }
-        }
+    init(connection: DeviceConnection) {
+        self.connection = connection
+        super.init()
     }
 
-    private var phase: Phase {
-        if let error = pairing.lastError { return .failed(error) }
-        if let pin = pairing.pin { return .code(pin) }
-        if pairing.isRunning { return .broadcasting }
-        if pairing.hasFile { return .ready }
-        return .dormant
-    }
+    // MARK: - Cycle de vie
 
-    // MARK: - Corps
+    func start() async {
+        guard !isRunning else { return }
+        isRunning = true
+        lastError = nil
+        pin = nil
+        defer { isRunning = false; stopKeepAlive(); stopAdvertising() }
 
-    var body: some View {
-        ZStack {
-            PX.Color.canvas
+        do {
+            try startKeepAlive()
+            LogBridge.shared.note("host de jumelage démarré — en attente de Réglages")
 
-            ScrollView {
-                VStack(spacing: PX.Space.snug) {
+            let path = PairingStore.fileURL.path
 
-                    InstrumentStrip(
-                        latitude: nil, longitude: nil,
-                        sessionLabel: "\(connection.deviceIP) : 49152",
-                        live: false
-                    )
-                    .appear(0, shown)
-
-                    title
-                        .appear(1, shown)
-
-                    statusBanner
-                        .appear(2, shown)
-
-                    if case .code(let pin) = phase {
-                        pinCard(pin)
-                            .transition(.asymmetric(
-                                insertion: .scale(scale: 0.94).combined(with: .opacity),
-                                removal: .opacity
-                            ))
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                // Appel C bloquant : jamais dans une Task, le pool coopératif
+                // n'a qu'un thread par cœur et les geler fait dérailler le reste.
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let result = "Parallax".withCString { name in
+                        path.withCString { out in
+                            px_pairing_run_host(name, out, pxPinSink, pxReadySink)
+                        }
                     }
-
-                    rail
-                        .appear(3, shown)
-
-                    action
-                        .appear(4, shown)
-
-                    if case .failed(let message) = phase {
-                        errorCard(message)
-                            .transition(.move(edge: .top).combined(with: .opacity))
+                    if result == PX_OK {
+                        continuation.resume()
+                    } else {
+                        continuation.resume(
+                            throwing: FFI.Failure(code: result, detail: FFI.lastError)
+                        )
                     }
                 }
-                .padding(.horizontal, PX.Space.base)
-                .padding(.bottom, 110)
-            }
-        }
-        .animation(PX.Motion.settle, value: pairing.isRunning)
-        .animation(PX.Motion.acquire, value: pairing.pin)
-        .animation(PX.Motion.settle, value: pairing.hasFile)
-        .animation(PX.Motion.settle, value: pairing.lastError)
-        .onAppear { shown = true }
-    }
-
-    // MARK: - Titre
-
-    private var title: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text("Jumelage")
-                .font(PX.Font.display(30, .heavy))
-                .foregroundStyle(PX.Color.ink)
-            Text("Sans ordinateur, directement depuis Réglages.")
-                .font(PX.Font.body(13))
-                .foregroundStyle(PX.Color.inkMuted)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.top, PX.Space.tight)
-    }
-
-    // MARK: - Bandeau d'état
-
-    /// Le seul élément qui change de couleur. Il porte l'état à lui seul, ce
-    /// qui évite d'avoir à teinter six composants et à les tenir synchronisés.
-    private var statusBanner: some View {
-        HStack(spacing: PX.Space.snug) {
-            PulseDot(color: phase.tint, active: phase.step == 1 || phase.step == 2)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(phase.label)
-                    .font(PX.Font.display(15, .semibold))
-                    .foregroundStyle(PX.Color.ink)
-                    .contentTransition(.opacity)
-                Text(subtitle)
-                    .font(PX.Font.mono(11))
-                    .foregroundStyle(PX.Color.inkMuted)
-                    .contentTransition(.opacity)
             }
 
-            Spacer(minLength: 0)
-
-            Image(systemName: phase.icon)
-                .font(.system(size: 19))
-                .foregroundStyle(phase.tint)
-                .contentTransition(.symbolEffect(.replace))
+            hasFile = PairingStore.exists
+            pin = nil
+            LogBridge.shared.note("jumelage terminé")
+        } catch {
+            lastError = error.localizedDescription
+            pin = nil
         }
-        .padding(PX.Space.base)
-        .glassCard(emphasis: true)
-        .overlay(
-            RoundedRectangle(cornerRadius: PX.Radius.card, style: .continuous)
-                .strokeBorder(phase.tint.opacity(0.34), lineWidth: 1)
+    }
+
+    // MARK: - Observation des callbacks natifs
+
+    func observePIN() {
+        NotificationCenter.default.addObserver(
+            forName: .pairingPIN, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let code = note.object as? String else { return }
+            Task { @MainActor in self?.pin = code }
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: .pairingReady, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let payload = note.object as? PairingReadyPayload else { return }
+            Task { @MainActor in self?.advertise(payload) }
+        }
+    }
+
+    // MARK: - Bonjour
+
+    /// Publie le service que Réglages va chercher. Le type porte un point
+    /// final : `NetService` attend un nom pleinement qualifié, et sans lui
+    /// l'enregistrement est silencieusement ignoré.
+    private func advertise(_ payload: PairingReadyPayload) {
+        stopAdvertising()
+
+        let service = NetService(
+            domain: "local.",
+            type: "_remotepairing-pairable-host._tcp.",
+            name: payload.serviceID,
+            port: Int32(payload.port)
         )
-        .shadow(color: phase.tint.opacity(0.22), radius: 16, y: 6)
-    }
 
-    private var subtitle: String {
-        switch phase {
-        case .dormant:      "aucune diffusion"
-        case .broadcasting: "en attente de l'appareil"
-        case .code:         "saisis le code dans Réglages"
-        case .ready:        "prêt pour l'installation et le GPS"
-        case .failed:       "voir le détail ci-dessous"
+        var txt: [String: Data] = [:]
+        for (key, value) in payload.records {
+            txt[key] = Data(value.utf8)
         }
-    }
+        service.setTXTRecord(NetService.data(fromTXTRecord: txt))
+        service.delegate = self
+        service.publish()
+        netService = service
 
-    // MARK: - Le code
-
-    /// Six cellules plutôt qu'une chaîne : les chiffres se lisent par paires
-    /// et se retiennent, ce qui est tout l'enjeu au moment de basculer vers
-    /// Réglages. Elles entrent en cascade, de gauche à droite.
-    private func pinCard(_ pin: String) -> some View {
-        VStack(spacing: PX.Space.snug) {
-            SectionLabel("Code de jumelage")
-
-            HStack(spacing: PX.Space.tight) {
-                ForEach(Array(pin.enumerated()), id: \.offset) { index, digit in
-                    Text(String(digit))
-                        .font(PX.Font.mono(30, .bold))
-                        .monospacedDigit()
-                        .foregroundStyle(PX.Color.ink)
-                        .frame(width: 44, height: 58)
-                        .background(
-                            RoundedRectangle(cornerRadius: PX.Radius.chip, style: .continuous)
-                                .fill(PX.Color.night.opacity(0.6))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: PX.Radius.chip, style: .continuous)
-                                .strokeBorder(PX.Color.azimuth.opacity(0.45), lineWidth: 1)
-                        )
-                        .transition(.scale(scale: 0.5).combined(with: .opacity))
-                        .animation(PX.Motion.acquire.delay(Double(index) * 0.06), value: pin)
-                }
-            }
-
-            Text("Laisse Parallax ouvert. Une app suspendue cesse de diffuser, et l'entrée disparaît de Réglages.")
-                .font(PX.Font.body(12))
-                .foregroundStyle(PX.Color.inkMuted)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(PX.Space.base)
-        .glassCard(emphasis: true)
-    }
-
-    // MARK: - Rail d'étapes
-
-    private var rail: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            SectionLabel("Marche à suivre")
-                .padding(.bottom, PX.Space.snug)
-
-            step(1, "Lancer la diffusion",
-                 "Parallax s'annonce sur le réseau local.")
-            connector(filled: phase.step >= 2)
-            step(2, "Réglages › Confidentialité et sécurité › Mode développeur",
-                 "Touche « Pair with Parallax » sous Autres appareils.")
-            connector(filled: phase.step >= 3)
-            step(3, "Saisir le code",
-                 "Recopie les six chiffres dans la demande affichée par Réglages.")
-        }
-        .padding(PX.Space.base)
-        .glassCard()
-    }
-
-    private func step(_ number: Int, _ heading: String, _ detail: String) -> some View {
-        let active = phase.step == number
-        let done = phase.step > number
-
-        return HStack(alignment: .top, spacing: PX.Space.snug) {
-            ZStack {
-                Circle()
-                    .fill(done ? PX.Color.verdant.opacity(0.18)
-                               : active ? PX.Color.azimuth.opacity(0.20)
-                                        : Color.white.opacity(0.04))
-                    .frame(width: 28, height: 28)
-
-                if done {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(PX.Color.verdant)
-                } else {
-                    Text("\(number)")
-                        .font(PX.Font.mono(12, .bold))
-                        .foregroundStyle(active ? PX.Color.azimuth : PX.Color.inkFaint)
-                }
-            }
-            .overlay(
-                Circle()
-                    .strokeBorder(active ? PX.Color.azimuth.opacity(0.55) : .clear, lineWidth: 1.2)
-                    .frame(width: 28, height: 28)
-            )
-            .scaleEffect(active ? 1.06 : 1)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(heading)
-                    .font(PX.Font.display(13.5, .semibold))
-                    .foregroundStyle(active || done ? PX.Color.ink : PX.Color.inkMuted)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(detail)
-                    .font(PX.Font.body(12))
-                    .foregroundStyle(active ? PX.Color.inkMuted : PX.Color.inkFaint)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 0)
-        }
-        .animation(PX.Motion.settle, value: phase.step)
-    }
-
-    /// Le trait qui relie deux étapes. Il se remplit vers le bas : c'est le
-    /// seul endroit où la progression est représentée comme un mouvement.
-    private func connector(filled: Bool) -> some View {
-        Rectangle()
-            .fill(filled ? PX.Color.verdant.opacity(0.6) : PX.Color.horizon)
-            .frame(width: 1.5, height: 22)
-            .padding(.leading, 13)
-            .animation(PX.Motion.settle, value: filled)
-    }
-
-    // MARK: - Action
-
-    @ViewBuilder
-    private var action: some View {
-        switch phase {
-        case .ready:
-            VStack(spacing: PX.Space.tight) {
-                Button {
-                    Task { await pairing.start() }
-                } label: {
-                    Label("Rejumeler", systemImage: "arrow.clockwise")
-                }
-                .buttonStyle(SecondaryButtonStyle())
-            }
-
-        case .broadcasting, .code:
-            HStack(spacing: PX.Space.tight) {
-                ProgressView().tint(PX.Color.azimuth)
-                Text("Diffusion en cours — garde l'app ouverte")
-                    .font(PX.Font.mono(11))
-                    .foregroundStyle(PX.Color.inkMuted)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .glassCard(radius: PX.Radius.control)
-
-        default:
-            Button {
-                Task { await pairing.start() }
-            } label: {
-                Label("Démarrer le jumelage", systemImage: "dot.radiowaves.left.and.right")
-            }
-            .buttonStyle(ProminentButtonStyle())
-        }
-    }
-
-    private func errorCard(_ message: String) -> some View {
-        HStack(alignment: .top, spacing: PX.Space.snug) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(PX.Color.alert)
-            Text(message)
-                .font(PX.Font.body(12.5))
-                .foregroundStyle(PX.Color.inkMuted)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-        .padding(PX.Space.base)
-        .glassCard()
-        .overlay(
-            RoundedRectangle(cornerRadius: PX.Radius.card, style: .continuous)
-                .strokeBorder(PX.Color.alert.opacity(0.28), lineWidth: 1)
+        LogBridge.shared.note(
+            "annonce _remotepairing-pairable-host._tcp \(payload.serviceID) sur le port \(payload.port)"
         )
+    }
+
+    private func stopAdvertising() {
+        netService?.stop()
+        netService = nil
+    }
+
+    // MARK: - Maintien en vie
+
+    /// L'utilisateur part dans Réglages au milieu de l'opération. Une app
+    /// suspendue cesse de répondre à Bonjour et l'entrée disparaît — c'est la
+    /// première cause d'échec. De l'audio silencieux suffit à rester éveillé,
+    /// et fonctionne dès iOS 17.4.
+    private func startKeepAlive() throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+        try session.setActive(true)
+
+        guard let url = Bundle.main.url(forResource: "silence", withExtension: "wav") else {
+            LogBridge.shared.note("⚠️ silence.wav absent — l'app peut être suspendue")
+            return
+        }
+        let player = try AVAudioPlayer(contentsOf: url)
+        player.numberOfLoops = -1
+        player.volume = 0
+        player.play()
+        keepAlive = player
+    }
+
+    private func stopKeepAlive() {
+        keepAlive?.stop()
+        keepAlive = nil
+        try? AVAudioSession.sharedInstance().setActive(false)
     }
 }
 
-// MARK: - Point pulsant
+// MARK: - Retour de publication
 
-/// Halo qui respire pendant la diffusion. Deux cercles concentriques : le
-/// noyau reste net, l'anneau s'étale et s'efface. C'est ce qui distingue
-/// « en attente » de « figé », sans texte.
-struct PulseDot: View {
-    let color: Color
-    let active: Bool
+extension PairingController: NetServiceDelegate {
 
-    @State private var expanded = false
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .stroke(color.opacity(active ? 0.5 : 0), lineWidth: 1.4)
-                .frame(width: 26, height: 26)
-                .scaleEffect(expanded && active ? 1.5 : 0.85)
-                .opacity(expanded && active ? 0 : 1)
-
-            Circle()
-                .fill(color)
-                .frame(width: 9, height: 9)
-                .shadow(color: color.opacity(0.7), radius: active ? 7 : 0)
+    nonisolated func netServiceDidPublish(_ sender: NetService) {
+        Task { @MainActor in
+            LogBridge.shared.note("service publié — visible dans Réglages")
         }
-        .frame(width: 30, height: 30)
-        .onAppear {
-            withAnimation(.easeOut(duration: 1.6).repeatForever(autoreverses: false)) {
-                expanded = true
-            }
-        }
-        .animation(PX.Motion.settle, value: active)
-        .animation(PX.Motion.settle, value: color)
     }
+
+    nonisolated func netService(_ sender: NetService, didNotPublish errorDict: [String: NSNumber]) {
+        let code = errorDict[NetService.errorCode]?.intValue ?? -1
+        Task { @MainActor in
+            self.lastError = "Publication Bonjour refusée (code \(code)). Vérifie l'autorisation réseau local dans Réglages › Parallax."
+            LogBridge.shared.note("échec de publication Bonjour : \(code)")
+        }
+    }
+}
+
+// MARK: - Ponts C
+
+/// Ces deux fonctions sont de **portée fichier**, donc non isolées. Une
+/// closure définie dans un contexte `@MainActor` hérite de son isolation, et
+/// le runtime Swift 6 trappe dès que Rust l'appelle depuis un de ses threads.
+
+struct PairingReadyPayload {
+    let serviceID: String
+    let port: UInt16
+    let records: [(String, String)]
+}
+
+func pxPinSink(_ pointer: UnsafePointer<CChar>?) {
+    guard let pointer else { return }
+    let code = String(cString: pointer)
+    DispatchQueue.main.async {
+        NotificationCenter.default.post(name: .pairingPIN, object: code)
+    }
+}
+
+func pxReadySink(
+    _ serviceID: UnsafePointer<CChar>?,
+    _ port: UInt16,
+    _ keys: UnsafePointer<UnsafePointer<CChar>?>?,
+    _ values: UnsafePointer<UnsafePointer<CChar>?>?,
+    _ count: Int
+) {
+    guard let serviceID else { return }
+    let identifier = String(cString: serviceID)
+
+    var records: [(String, String)] = []
+    if let keys, let values {
+        for index in 0..<count {
+            guard let key = keys[index], let value = values[index] else { continue }
+            records.append((String(cString: key), String(cString: value)))
+        }
+    }
+
+    let payload = PairingReadyPayload(serviceID: identifier, port: port, records: records)
+    DispatchQueue.main.async {
+        NotificationCenter.default.post(name: .pairingReady, object: payload)
+    }
+}
+
+extension Notification.Name {
+    static let pairingPIN = Notification.Name("io.parallax.pairingPIN")
+    static let pairingReady = Notification.Name("io.parallax.pairingReady")
 }
