@@ -205,8 +205,8 @@ mod imp {
 
     pub fn sign(s: &mut Session, ipa: &str) -> Result<String, String> {
         s.runtime
-            .block_on(async { s.sideloader.sign_app(ipa, None, false).await })
-            .map(|p| p.to_string_lossy().into_owned())
+            .block_on(async { s.sideloader.sign_app(ipa.into(), None, false).await })
+            .map(|p| p.0.to_string_lossy().into_owned())
             .map_err(|e| format!("signature : {e}"))
     }
 }
