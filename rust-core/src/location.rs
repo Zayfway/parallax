@@ -41,7 +41,7 @@ pub unsafe extern "C" fn px_ddi_is_mounted(rsd: *mut c_void) -> c_int {
     { imp::ddi_is_mounted(rsd) }
     #[cfg(not(feature = "device-location"))]
     {
-        let _ = rsd;
+        let _ = (adapter, rsd);
         set_last_error("px_ddi_is_mounted : compilé sans --features device-location");
         PX_ERR_NOT_BUILT
     }
@@ -83,12 +83,15 @@ pub unsafe extern "C" fn px_ddi_mount(
 /// # Safety
 /// `rsd` valide. Le handle retourné ne se libère qu'avec `px_location_close`.
 #[no_mangle]
-pub unsafe extern "C" fn px_location_open(rsd: *mut c_void) -> *mut PxLocationSession {
+pub unsafe extern "C" fn px_location_open(
+    adapter: *mut c_void,
+    rsd: *mut c_void,
+) -> *mut PxLocationSession {
     clear_last_error();
 
     #[cfg(feature = "device-location")]
     {
-        match imp::open(rsd) {
+        match imp::open(adapter, rsd) {
             Ok(inner) => Box::into_raw(Box::new(PxLocationSession { inner, last_fix: None })),
             Err(msg) => {
                 // Cause n°1 en pratique : DDI absente. Le dire ici, sinon
@@ -100,7 +103,7 @@ pub unsafe extern "C" fn px_location_open(rsd: *mut c_void) -> *mut PxLocationSe
     }
     #[cfg(not(feature = "device-location"))]
     {
-        let _ = rsd;
+        let _ = (adapter, rsd);
         // Le stub retourne une session utilisable : l'interface reste
         // pilotable en démo — marqueur, joystick et GPX compris — ce qui
         // permet de juger l'ergonomie avant que le natif ne soit branché.
@@ -222,6 +225,7 @@ mod imp {
     use idevice::dvt::location_simulation::LocationSimulationClient;
     use idevice::dvt::remote_server::RemoteServerClient;
     use idevice::rsd::RsdHandshake;
+    use idevice::tcp::handle::AdapterHandle;
     use idevice::RsdService;
     use std::ffi::c_void;
     use tokio::sync::{mpsc, oneshot};
@@ -251,8 +255,9 @@ mod imp {
     pub unsafe fn ddi_is_mounted(_p: *mut c_void) -> i32 { crate::PX_OK }
     pub unsafe fn ddi_mount(_p: *mut c_void, _i: &str, _m: &str) -> i32 { crate::PX_OK }
 
-    pub unsafe fn open(ptr: *mut c_void) -> Result<Session, String> {
-        if ptr.is_null() { return Err("handle RSD nul".into()); }
+    pub unsafe fn open(adapter: *mut c_void, ptr: *mut c_void) -> Result<Session, String> {
+        if adapter.is_null() || ptr.is_null() { return Err("handle nul".into()); }
+        let raw_ad = SendPtr(adapter);
         let raw = SendPtr(ptr);
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -263,10 +268,11 @@ mod imp {
         let (ready_tx, ready_rx) = oneshot::channel::<Result<(), String>>();
 
         runtime.spawn(async move {
-            let raw = raw;
+            let (raw, raw_ad) = (raw, raw_ad);
             let rsd = unsafe { &mut *(raw.0 as *mut RsdHandshake) };
+            let adapter = unsafe { &mut *(raw_ad.0 as *mut AdapterHandle) };
 
-            let mut server = match RemoteServerClient::connect_rsd(rsd).await {
+            let mut server = match RemoteServerClient::connect_rsd(adapter, rsd).await {
                 Ok(s) => s,
                 Err(e) => { let _ = ready_tx.send(Err(format!("ouverture DVT : {e}"))); return; }
             };
