@@ -1,0 +1,119 @@
+name: Build IPA
+
+# Produit un .ipa **non signé** — volontairement.
+# Un IPA non signé s'installe par SideStore / AltStore / Feather, qui le
+# re-signent avec ton certificat sur l'appareil. Signer en CI imposerait de
+# déposer ta clé privée Apple dans les secrets d'un dépôt public : inutile ici,
+# et une très mauvaise idée.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      features:
+        description: "Features Rust (vide = stub)"
+        required: false
+        default: ""
+        type: choice
+        options: ["", "device-location", "device"]
+
+jobs:
+  build:
+    # Runner macOS indispensable : le SDK iOS et xcodebuild n'existent que là.
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sélectionner Xcode
+        # ⚠️ Vérifie la version réellement présente sur l'image au moment où tu
+        # pousses — la liste évolue vite et un chemin absent fait échouer le job
+        # dès la première étape.
+        run: |
+          ls /Applications | grep -i "^Xcode" || true
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          xcodebuild -version
+
+      - name: Rust + cibles iOS
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust-core/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('rust-core/Cargo.toml') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Construire le xcframework
+        run: ./build-rust.sh "${{ inputs.features }}"
+
+      - name: Vérifier l'absence de symboles dupliqués
+        # Avec --features device, idevice 0.1.61 (via isideload) et 0.1.63 (git)
+        # coexistent. Ils doivent rester des crates distincts. Si ce test casse,
+        # la résolution de features les a fusionnés, et le link échouera plus
+        # loin avec un message bien moins clair.
+        run: |
+          LIB=rust-core/target/aarch64-apple-ios/release/libparallax_ffi.a
+          DUPES=$(nm -g "$LIB" 2>/dev/null | grep ' T ' | awk '{print $3}' \
+                  | sort | uniq -d | head -20)
+          if [ -n "$DUPES" ]; then
+            echo "::error::Symboles globaux dupliqués :"; echo "$DUPES"; exit 1
+          fi
+          echo "OK — aucun doublon."
+
+      - name: Générer le projet Xcode
+        run: brew install xcodegen && xcodegen generate
+
+      - name: Archiver
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project Parallax.xcodeproj \
+            -scheme Parallax \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/Parallax.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            | tee build.log | grep -E "error:|warning:|BUILD" || true
+          test -d build/Parallax.xcarchive || { tail -60 build.log; exit 1; }
+
+      - name: Empaqueter l'IPA
+        # Un IPA est un zip contenant un dossier Payload/ à la racine. Rien de plus.
+        run: |
+          mkdir -p build/Payload
+          cp -R build/Parallax.xcarchive/Products/Applications/Parallax.app build/Payload/
+          cd build && zip -qry Parallax.ipa Payload
+          echo "Taille : $(du -h Parallax.ipa | cut -f1)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Parallax-ipa
+          path: build/Parallax.ipa
+          retention-days: 30
+
+      # Sur tag, publie une release : un artefact de run ordinaire exige d'être
+      # connecté à GitHub pour être téléchargé, ce qui est pénible depuis un
+      # iPhone. Une release donne un lien direct.
+      - name: Publier la release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/Parallax.ipa
+          body: |
+            IPA **non signé**. Installe-le via SideStore, AltStore ou Feather —
+            ils le re-signeront avec ton certificat.
+
+            Profil du cœur natif : `${{ inputs.features || 'stub' }}`.
+            En profil stub, l'interface est complète mais aucune opération sur
+            l'appareil n'aboutit. Voir Réglages › Version.

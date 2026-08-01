@@ -1,0 +1,20 @@
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+build/
+
+# Généré par build-rust.sh — ne jamais versionner
+ParallaxFFI.xcframework/
+rust-core/target/
+rust-core/include/parallax.h
+
+# macOS
+.DS_Store
+
+# Ne jamais committer : fichier de jumelage et identifiants
+*.mobiledevicepairing
+rp_pairing_file.plist
+*.p12
+*.mobileprovision

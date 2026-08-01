@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Parallax — maquette</title>
+<style>
+:root{
+  --night:#0A0D18; --abyss:#131829; --strata:#1C2338; --horizon:#2A3352;
+  --azimuth:#7C8CFF; --signal:#F5A65B; --verdant:#4ADE9B; --alert:#FF6B6B;
+  --ink:#F2F4FF; --muted:#9AA3C4; --faint:#5A6488;
+  --rounded:ui-rounded,"SF Pro Rounded",system-ui,-apple-system,sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{
+  background:
+    radial-gradient(120% 70% at 50% -10%, #1a1f3d 0%, transparent 60%),
+    var(--night);
+  color:var(--ink); font-family:var(--rounded);
+  min-height:100vh; padding:28px 16px 60px;
+}
+header{max-width:520px;margin:0 auto 30px;text-align:center}
+.wordmark{
+  font-size:36px;font-weight:800;letter-spacing:-1.2px;
+  background:linear-gradient(115deg,#fff 20%,var(--azimuth) 62%,var(--signal) 105%);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+}
+.tagline{font-family:var(--mono);font-size:11px;letter-spacing:1.6px;
+  text-transform:uppercase;color:var(--faint);margin-top:8px}
+.rationale{font-size:13.5px;line-height:1.65;color:var(--muted);
+  margin-top:16px;text-align:left;padding:14px 16px;
+  background:rgba(255,255,255,.03);border:1px solid var(--horizon);border-radius:14px}
+.rationale b{color:var(--ink);font-weight:600}
+.amber{color:var(--signal)}
+
+/* ── swatches ── */
+.swatches{display:flex;gap:8px;max-width:520px;margin:0 auto 34px;flex-wrap:wrap;justify-content:center}
+.sw{flex:1 1 84px;border-radius:12px;padding:10px 8px 9px;border:1px solid rgba(255,255,255,.08)}
+.sw span{display:block;font-family:var(--mono);font-size:9px;letter-spacing:.5px}
+.sw .nm{font-weight:700;font-size:10px;margin-bottom:2px}
+
+/* ── phone ── */
+.rail{display:flex;gap:22px;overflow-x:auto;padding:4px 4px 22px;
+  scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch}
+.rail::-webkit-scrollbar{display:none}
+.slot{scroll-snap-align:center;flex:0 0 auto}
+.caption{font-family:var(--mono);font-size:10px;letter-spacing:1.2px;
+  text-transform:uppercase;color:var(--faint);text-align:center;margin-bottom:10px}
+.phone{
+  width:302px;height:640px;border-radius:44px;position:relative;overflow:hidden;
+  background:var(--night);
+  border:1px solid rgba(255,255,255,.10);
+  box-shadow:0 30px 70px rgba(0,0,0,.65), inset 0 1px 0 rgba(255,255,255,.07);
+}
+.phone::before{content:"";position:absolute;top:0;left:50%;transform:translateX(-50%);
+  width:104px;height:26px;background:#000;border-radius:0 0 16px 16px;z-index:20}
+.status{display:flex;justify-content:space-between;padding:13px 24px 0;
+  font-size:12px;font-weight:600;position:relative;z-index:10}
+.screen{padding:14px 16px 0;height:calc(100% - 34px);overflow:hidden;position:relative}
+
+/* ── glass ── */
+.card{
+  background:linear-gradient(180deg,rgba(28,35,56,.72),rgba(19,24,41,.60));
+  border:.8px solid rgba(255,255,255,.10);
+  border-radius:20px;padding:15px;backdrop-filter:blur(22px);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.09);
+}
+.card + .card{margin-top:11px}
+.lbl{font-family:var(--mono);font-size:9px;letter-spacing:1px;
+  text-transform:uppercase;color:var(--faint);margin-bottom:7px;display:block}
+.h{font-size:15px;font-weight:700;margin-bottom:3px}
+.sub{font-size:12px;color:var(--muted);line-height:1.5}
+
+/* instrument strip */
+.instr{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:11px;
+  background:rgba(10,13,24,.66);border:.8px solid rgba(255,255,255,.09);
+  backdrop-filter:blur(20px);margin-bottom:11px}
+.dot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--faint)}
+.dot.on{background:var(--signal);box-shadow:0 0 12px var(--signal);animation:pulse 2.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+.coord{font-family:var(--mono);font-size:11.5px;font-weight:600;
+  font-variant-numeric:tabular-nums;color:var(--muted)}
+.coord.on{color:var(--signal)}
+.sess{margin-left:auto;font-family:var(--mono);font-size:9px;
+  letter-spacing:.7px;color:var(--faint)}
+
+/* inputs */
+.f{margin-bottom:10px}
+.inp{background:rgba(10,13,24,.55);border:1px solid var(--horizon);
+  border-radius:14px;padding:12px 14px;font-size:14px;color:var(--faint)}
+.inp.filled{color:var(--ink);font-family:var(--mono);font-size:13px}
+
+/* buttons */
+.btn{border-radius:14px;padding:15px;text-align:center;font-size:16px;
+  font-weight:600;letter-spacing:-.2px}
+.btn.pri{background:linear-gradient(180deg,var(--azimuth),#6070e8);
+  border:.8px solid rgba(255,255,255,.20);box-shadow:0 10px 26px rgba(124,140,255,.34)}
+.btn.amber{background:linear-gradient(180deg,var(--signal),#e08c3c);
+  border:.8px solid rgba(255,255,255,.22);box-shadow:0 10px 26px rgba(245,166,91,.34);color:#20140a}
+.btn.ghost{background:rgba(255,255,255,.05);border:1px solid var(--horizon);
+  color:var(--muted);font-size:14px;padding:12px}
+
+/* segmented */
+.seg{display:flex;background:rgba(10,13,24,.55);border:1px solid var(--horizon);
+  border-radius:13px;padding:3px;gap:3px}
+.seg div{flex:1;text-align:center;padding:9px;border-radius:10px;
+  font-size:12.5px;font-weight:600;color:var(--faint)}
+.seg div.act{background:var(--strata);color:var(--ink);
+  box-shadow:0 2px 8px rgba(0,0,0,.4)}
+
+/* steps */
+.step{display:flex;gap:11px;margin-bottom:12px;align-items:flex-start}
+.num{width:21px;height:21px;border-radius:50%;background:rgba(124,140,255,.16);
+  border:1px solid rgba(124,140,255,.4);color:var(--azimuth);
+  font-family:var(--mono);font-size:10px;font-weight:700;
+  display:flex;align-items:center;justify-content:center;flex:none;margin-top:1px}
+.step p{font-size:12.5px;line-height:1.5;color:var(--muted)}
+.step b{color:var(--ink);font-weight:600}
+
+/* pin code */
+.pin{display:flex;gap:7px;justify-content:center;margin:14px 0 4px}
+.pin span{width:36px;height:46px;border-radius:11px;
+  background:rgba(124,140,255,.10);border:1px solid rgba(124,140,255,.35);
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:20px;font-weight:700;color:var(--azimuth)}
+
+/* badges */
+.badge{display:inline-flex;align-items:center;gap:6px;padding:6px 11px;
+  border-radius:999px;font-size:11px;font-weight:600}
+.badge.ok{background:rgba(74,222,155,.14);color:var(--verdant);
+  border:1px solid rgba(74,222,155,.30)}
+.badge.warn{background:rgba(255,107,107,.13);color:var(--alert);
+  border:1px solid rgba(255,107,107,.28)}
+
+/* map */
+.map{position:absolute;inset:0;
+  background:
+    radial-gradient(circle at 52% 42%, rgba(124,140,255,.13), transparent 46%),
+    linear-gradient(150deg,#0d1424 0%,#151d33 46%,#0b1120 100%);}
+.grid{position:absolute;inset:0;opacity:.30;
+  background-image:linear-gradient(rgba(124,140,255,.22) .8px,transparent .8px),
+                   linear-gradient(90deg,rgba(124,140,255,.22) .8px,transparent .8px);
+  background-size:44px 44px}
+.road{position:absolute;background:rgba(154,163,196,.16);border-radius:2px}
+.marker{position:absolute;top:44%;left:50%;transform:translate(-50%,-50%);z-index:5}
+.marker .core{width:17px;height:17px;border-radius:50%;background:var(--signal);
+  border:3px solid #fff;box-shadow:0 0 26px var(--signal),0 3px 10px rgba(0,0,0,.6)}
+.ring{position:absolute;top:50%;left:50%;width:17px;height:17px;border-radius:50%;
+  border:2px solid var(--signal);transform:translate(-50%,-50%);
+  animation:ripple 2.6s ease-out infinite}
+@keyframes ripple{0%{width:17px;height:17px;opacity:.85}
+  100%{width:130px;height:130px;opacity:0}}
+
+/* joystick */
+.joy{position:absolute;bottom:98px;right:22px;width:104px;height:104px;
+  border-radius:50%;background:rgba(19,24,41,.55);backdrop-filter:blur(18px);
+  border:1px solid rgba(255,255,255,.12);
+  display:flex;align-items:center;justify-content:center}
+.knob{width:44px;height:44px;border-radius:50%;
+  background:linear-gradient(180deg,var(--azimuth),#5d6ce0);
+  box-shadow:0 6px 18px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.3);
+  transform:translate(11px,-13px)}
+
+/* tabbar */
+.tabs{position:absolute;bottom:12px;left:14px;right:14px;height:60px;
+  border-radius:24px;background:rgba(19,24,41,.80);backdrop-filter:blur(28px);
+  border:.8px solid rgba(255,255,255,.11);
+  display:flex;align-items:center;justify-content:space-around;z-index:30;
+  box-shadow:0 12px 34px rgba(0,0,0,.55)}
+.tab{display:flex;flex-direction:column;align-items:center;gap:4px;
+  font-size:9.5px;font-weight:600;color:var(--faint);flex:1}
+.tab.act{color:var(--azimuth)}
+.tab.act.amberTab{color:var(--signal)}
+.ic{font-size:17px;line-height:1}
+.pad{height:88px}
+
+.note{max-width:520px;margin:26px auto 0;font-size:13px;line-height:1.7;
+  color:var(--muted)}
+.note h3{font-size:14px;color:var(--ink);margin:20px 0 7px;font-weight:700}
+.note code{font-family:var(--mono);font-size:11.5px;color:var(--signal);
+  background:rgba(245,166,91,.10);padding:1px 5px;border-radius:5px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wordmark">Parallax</div>
+  <div class="tagline">Position · Signature · Contrôle</div>
+  <div class="rationale">
+    <b>Pourquoi ce nom.</b> La parallaxe est le déplacement apparent d'un objet
+    selon le point d'où on l'observe — exactement ce que fait l'app : l'appareil
+    déclare une position qui dépend de qui l'interroge.<br><br>
+    <b>Pourquoi cette couleur.</b> Champ froid indigo, et une seule chaleur —
+    <span class="amber">l'ambre</span> — réservée à un usage unique :
+    <b>position simulée active</b>. Elle n'apparaît nulle part ailleurs. Quand
+    l'écran devient chaud, c'est que le GPS ment. Ça s'apprend en une session,
+    sans légende.
+  </div>
+</header>
+
+<div class="swatches">
+  <div class="sw" style="background:#0A0D18"><span class="nm">night</span><span>0A0D18</span></div>
+  <div class="sw" style="background:#131829"><span class="nm">abyss</span><span>131829</span></div>
+  <div class="sw" style="background:#2A3352"><span class="nm">horizon</span><span>2A3352</span></div>
+  <div class="sw" style="background:#7C8CFF;color:#0A0D18"><span class="nm">azimuth</span><span>7C8CFF</span></div>
+  <div class="sw" style="background:#F5A65B;color:#20140a"><span class="nm">signal</span><span>F5A65B</span></div>
+  <div class="sw" style="background:#4ADE9B;color:#08160F"><span class="nm">verdant</span><span>4ADE9B</span></div>
+</div>
+
+<div class="rail">
+
+  <!-- ═══ CARTE ═══ -->
+  <div class="slot">
+    <div class="caption">Carte — spoof actif</div>
+    <div class="phone">
+      <div class="map">
+        <div class="grid"></div>
+        <div class="road" style="top:31%;left:0;right:0;height:15px"></div>
+        <div class="road" style="top:0;bottom:0;left:63%;width:12px"></div>
+        <div class="road" style="top:62%;left:0;right:0;height:9px"></div>
+      </div>
+      <div class="status"><span>21:37</span><span>􀙇 􀛨 32</span></div>
+      <div class="screen">
+        <div class="instr">
+          <div class="dot on"></div>
+          <div class="coord on">+48.85837 · +002.29448</div>
+          <div class="sess">DVT · LIVE</div>
+        </div>
+        <div class="marker">
+          <div class="ring"></div><div class="ring" style="animation-delay:1.3s"></div>
+          <div class="core"></div>
+        </div>
+        <div class="joy"><div class="knob"></div></div>
+        <div style="position:absolute;bottom:88px;left:16px;right:140px">
+          <div class="card" style="padding:12px 14px">
+            <span class="lbl">Trajet</span>
+            <div class="h" style="font-size:13px">balade-seine.gpx</div>
+            <div class="sub" style="font-size:11px">3 : 12 / 8 : 40 · 4,5 m/s</div>
+          </div>
+        </div>
+      </div>
+      <div class="tabs">
+        <div class="tab"><span class="ic">􀈄</span>Installer</div>
+        <div class="tab"><span class="ic">􀉻</span>Jumelage</div>
+        <div class="tab act amberTab"><span class="ic">􀋒</span>Carte</div>
+        <div class="tab"><span class="ic">􀇻</span>Certificats</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ INSTALLER ═══ -->
+  <div class="slot">
+    <div class="caption">Installer</div>
+    <div class="phone">
+      <div class="status"><span>21:37</span><span>􀙇 􀛨 32</span></div>
+      <div class="screen">
+        <div class="instr">
+          <div class="dot"></div>
+          <div class="coord">—— .————  ·  —— .————</div>
+          <div class="sess">TUNNEL · OFF</div>
+        </div>
+
+        <div style="margin:2px 0 13px">
+          <div style="font-size:25px;font-weight:800;letter-spacing:-.7px">Installer</div>
+          <div class="sub" style="margin-top:2px">Signé sur cet appareil, avec ton compte.</div>
+        </div>
+
+        <div class="card">
+          <span class="lbl">Compte Apple</span>
+          <div class="f"><div class="inp filled">nom@icloud.com</div></div>
+          <div class="f" style="margin-bottom:0"><div class="inp">Mot de passe</div></div>
+        </div>
+
+        <div class="card">
+          <span class="lbl">Application</span>
+          <div class="seg" style="margin-bottom:9px">
+            <div class="act">SideStore</div>
+            <div>+ LiveContainer</div>
+          </div>
+          <div class="seg">
+            <div class="act">Stable</div><div>Nightly</div>
+          </div>
+        </div>
+
+        <div class="card" style="border-color:rgba(255,107,107,.28);
+             background:linear-gradient(180deg,rgba(255,107,107,.10),rgba(19,24,41,.6))">
+          <div style="display:flex;gap:10px;align-items:flex-start">
+            <span style="font-size:16px">􀝾</span>
+            <div>
+              <div class="h" style="font-size:13px;color:var(--alert)">Tunnel requis</div>
+              <div class="sub" style="font-size:11.5px">Ouvre LocalDevVPN et touche Connect.</div>
+            </div>
+          </div>
+        </div>
+        <div class="pad"></div>
+      </div>
+      <div style="position:absolute;bottom:84px;left:16px;right:16px;z-index:25">
+        <div class="btn pri">Installer SideStore</div>
+      </div>
+      <div class="tabs">
+        <div class="tab act"><span class="ic">􀈄</span>Installer</div>
+        <div class="tab"><span class="ic">􀉻</span>Jumelage</div>
+        <div class="tab"><span class="ic">􀋒</span>Carte</div>
+        <div class="tab"><span class="ic">􀇻</span>Certificats</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ JUMELAGE ═══ -->
+  <div class="slot">
+    <div class="caption">Jumelage — code affiché</div>
+    <div class="phone">
+      <div class="status"><span>21:36</span><span>􀙇 􀛨 32</span></div>
+      <div class="screen">
+        <div class="instr">
+          <div class="dot"></div>
+          <div class="coord">10.7.0.1 : 49152</div>
+          <div class="sess">RSD · CIBLE</div>
+        </div>
+
+        <div style="margin:2px 0 13px">
+          <div style="font-size:25px;font-weight:800;letter-spacing:-.7px">Jumelage</div>
+          <div class="sub" style="margin-top:2px">Sans ordinateur, sur iOS 27.</div>
+        </div>
+
+        <div class="card" style="border-color:rgba(124,140,255,.30);
+             background:linear-gradient(180deg,rgba(124,140,255,.13),rgba(19,24,41,.62))">
+          <span class="lbl">Ton code</span>
+          <div class="pin"><span>4</span><span>0</span><span>7</span><span>2</span><span>9</span><span>1</span></div>
+          <div class="sub" style="text-align:center;font-size:11.5px;margin-top:6px">
+            Diffusion en cours — garde Parallax ouvert.
+          </div>
+        </div>
+
+        <div class="card">
+          <span class="lbl">Dans Réglages</span>
+          <div class="step"><div class="num">1</div><p>Confidentialité et sécurité › <b>Mode développeur</b></p></div>
+          <div class="step"><div class="num">2</div><p>Touche <b>Jumeler avec Parallax</b></p></div>
+          <div class="step"><div class="num">3</div><p>Saisis le code de ton iPhone</p></div>
+          <div class="step" style="margin-bottom:0"><div class="num">4</div><p>Recopie les <b>6 chiffres</b> ci-dessus</p></div>
+        </div>
+
+        <div style="margin-top:11px"><div class="btn ghost">Exporter le fichier</div></div>
+        <div class="pad"></div>
+      </div>
+      <div class="tabs">
+        <div class="tab"><span class="ic">􀈄</span>Installer</div>
+        <div class="tab act"><span class="ic">􀉻</span>Jumelage</div>
+        <div class="tab"><span class="ic">􀋒</span>Carte</div>
+        <div class="tab"><span class="ic">􀇻</span>Certificats</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ CERTIFICATS ═══ -->
+  <div class="slot">
+    <div class="caption">Certificats</div>
+    <div class="phone">
+      <div class="status"><span>21:38</span><span>􀙇 􀛨 32</span></div>
+      <div class="screen">
+        <div class="instr">
+          <div class="dot"></div>
+          <div class="coord">2 / 3 EMPLACEMENTS</div>
+          <div class="sess">ÉQUIPE · 9K2F…</div>
+        </div>
+
+        <div style="margin:2px 0 13px">
+          <div style="font-size:25px;font-weight:800;letter-spacing:-.7px">Certificats</div>
+          <div class="sub" style="margin-top:2px">Apple en autorise trois par compte.</div>
+        </div>
+
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:9px">
+            <div class="h" style="font-size:13.5px">iPhone 17 Pro</div>
+            <span class="badge ok">􀆅 Actif</span>
+          </div>
+          <div class="sub" style="font-family:var(--mono);font-size:10.5px;line-height:1.75">
+            SHA-1 &nbsp;A4 : 8F : 2C : 91 : DE<br>
+            Expire &nbsp;12 juin 2027
+          </div>
+        </div>
+
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:9px">
+            <div class="h" style="font-size:13.5px">iPad Air</div>
+            <span class="badge warn">􀇾 Inutilisé</span>
+          </div>
+          <div class="sub" style="font-family:var(--mono);font-size:10.5px;line-height:1.75">
+            SHA-1 &nbsp;71 : 03 : BB : 5A : 4F<br>
+            Expire &nbsp;28 févr. 2027
+          </div>
+          <div style="margin-top:11px"><div class="btn ghost" style="color:var(--alert)">Révoquer</div></div>
+        </div>
+        <div class="pad"></div>
+      </div>
+      <div class="tabs">
+        <div class="tab"><span class="ic">􀈄</span>Installer</div>
+        <div class="tab"><span class="ic">􀉻</span>Jumelage</div>
+        <div class="tab"><span class="ic">􀋒</span>Carte</div>
+        <div class="tab act"><span class="ic">􀇻</span>Certificats</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="note">
+  <h3>Ce qui change par rapport à tes captures</h3>
+  Le fond n'est plus noir pur : le matériau translucide d'iOS 26+ n'a rien à
+  réfracter sur du <code>#000</code> et s'effondre en gris plat. <code>#0A0D18</code>
+  lui rend sa profondeur.<br><br>
+  Les titres passent en <b>SF Pro Rounded</b>, la face la plus chaleureuse du
+  système, peu utilisée hors watchOS. Toute valeur venant de l'appareil —
+  coordonnées, IP, empreintes — est en <b>SF Mono</b> à chiffres tabulaires. La
+  règle porte du sens : si c'est en mono, c'est la machine qui parle.<br><br>
+  Le bouton principal est ancré au-dessus de la barre d'onglets au lieu de
+  passer dessous, et il n'y en a qu'un par écran.
+
+  <h3>L'élément signature</h3>
+  La bande d'instruments en haut de chaque écran. Elle affiche en continu ce que
+  l'appareil déclare, et c'est le seul endroit où l'ambre peut apparaître. C'est
+  la thèse du produit traduite en interface plutôt qu'écrite dans un texte
+  d'accueil.
+</div>
+
+</body>
+</html>
