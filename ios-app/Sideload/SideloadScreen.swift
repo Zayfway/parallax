@@ -181,6 +181,13 @@ struct SideloadScreen: View {
 /// Segment maison plutôt que `Picker(.segmented)` : le contrôle système ne
 /// laisse pas assez de prise sur le rayon ni sur la police, et le résultat
 /// jurerait avec le reste. Le comportement, lui, reste identique.
+/// Segment maison plutot que `Picker(.segmented)` : le controle systeme ne
+/// laisse pas assez de prise sur le rayon ni sur la police.
+///
+/// Chaque item est une vue separee. Ce n'est pas de la coquetterie : empiler
+/// trois ternaires dans une seule chaine de modificateurs fait exploser le
+/// verificateur de types de Swift, qui abandonne avec un message peu clair.
+/// Un sous-type par element garde chaque expression courte.
 struct SegmentedRow<T: Hashable>: View {
     @Binding var selection: T
     let options: [T]
@@ -189,31 +196,54 @@ struct SegmentedRow<T: Hashable>: View {
     var body: some View {
         HStack(spacing: 3) {
             ForEach(options, id: \.self) { option in
-                let active = option == selection
-                Text(title(option))
-                    .font(PX.Font.display(13, active ? .semibold : .medium))
-                    .foregroundStyle(active ? PX.Color.ink : PX.Color.inkFaint)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: PX.Radius.chip, style: .continuous)
-                            .fill(active ? PX.Color.strata : .clear)
-                            .shadow(color: active ? .black.opacity(0.35) : .clear, radius: 6, y: 2)
-                    )
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        withAnimation(PX.Motion.snap) { selection = option }
-                    }
+                SegmentItem(
+                    label: title(option),
+                    active: option == selection
+                ) {
+                    withAnimation(PX.Motion.tap) { selection = option }
+                }
             }
         }
         .padding(3)
-        .background(
-            RoundedRectangle(cornerRadius: PX.Radius.control, style: .continuous)
-                .fill(PX.Color.night.opacity(0.55))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: PX.Radius.control, style: .continuous)
-                .strokeBorder(PX.Color.horizon, lineWidth: 1)
-        )
+        .background(segmentBackground)
+        .overlay(segmentBorder)
+    }
+
+    private var segmentBackground: some View {
+        RoundedRectangle(cornerRadius: PX.Radius.control, style: .continuous)
+            .fill(PX.Color.night.opacity(0.55))
+    }
+
+    private var segmentBorder: some View {
+        RoundedRectangle(cornerRadius: PX.Radius.control, style: .continuous)
+            .strokeBorder(PX.Color.horizon, lineWidth: 1)
+    }
+}
+
+private struct SegmentItem: View {
+    let label: String
+    let active: Bool
+    let onTap: () -> Void
+
+    private var weight: Font.Weight { active ? .semibold : .medium }
+    private var ink: Color { active ? PX.Color.ink : PX.Color.inkFaint }
+    private var fill: Color { active ? PX.Color.strata : .clear }
+    private var shade: Color { active ? .black.opacity(0.35) : .clear }
+
+    var body: some View {
+        Text(label)
+            .font(PX.Font.display(13, weight))
+            .foregroundStyle(ink)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(chip)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onTap)
+    }
+
+    private var chip: some View {
+        RoundedRectangle(cornerRadius: PX.Radius.chip, style: .continuous)
+            .fill(fill)
+            .shadow(color: shade, radius: 6, y: 2)
     }
 }
