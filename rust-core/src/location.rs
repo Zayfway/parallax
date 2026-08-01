@@ -223,36 +223,61 @@ mod imp {
     use idevice::dvt::remote_server::RemoteServerClient;
     use idevice::mobile_image_mounter::ImageMounter;
     use idevice::rsd::RsdHandshake;
+    use idevice::RsdService;
     use std::ffi::c_void;
+    use tokio::sync::{mpsc, oneshot};
 
-    /// L'ordre des champs vaut ordre de destruction : le client tombe avant le
-    /// runtime, jamais l'inverse. Inverser ces lignes panique au drop.
+    // -- POURQUOI UNE TACHE DEDIEE ---------------------------------------
+    //
+    // `LocationSimulationClient<'a, R>` **emprunte** le RemoteServerClient :
+    //
+    //     pub async fn new(client: &'a mut RemoteServerClient<R>) -> ...
+    //
+    // Impossible de ranger les deux dans une meme struct : ce serait une
+    // structure auto-referentielle, que Rust refuse.
+    //
+    // Recreer le client a chaque appel ouvrirait un canal DVT par seconde :
+    // inacceptable sur une session longue. Un Box::leak marcherait mais
+    // demande de l'unsafe qu'on ne pourrait pas verifier sans materiel.
+    //
+    // Retenu : **une tache asynchrone possede les deux**, et l'exterieur lui
+    // parle par messages. L'emprunt vit dans une seule portee async, donc il
+    // est naturellement valide. Bonus : tant que la tache tourne, le canal
+    // DVT reste ouvert, ce qui est exactement l'invariant n1 de ce module.
+    // --------------------------------------------------------------------
+
+    pub enum Cmd {
+        Set(f64, f64, oneshot::Sender<Result<(), String>>),
+        Clear(oneshot::Sender<Result<(), String>>),
+    }
+
     pub struct Session {
-        pub client: LocationSimulationClient,
-        pub server: RemoteServerClient,
+        pub tx: mpsc::UnboundedSender<Cmd>,
         pub runtime: tokio::runtime::Runtime,
     }
 
-    unsafe fn rsd_ref<'a>(ptr: *mut c_void) -> Option<&'a mut RsdHandshake> {
-        (ptr as *mut RsdHandshake).as_mut()
-    }
+    /// Le handle RSD appartient a Swift et traverse une frontiere de tache.
+    /// Contrat : il doit rester valide jusqu'a `px_location_close`.
+    struct SendPtr(*mut c_void);
+    unsafe impl Send for SendPtr {}
 
     fn rt() -> Result<tokio::runtime::Runtime, String> {
         tokio::runtime::Runtime::new().map_err(|e| format!("runtime tokio : {e}"))
     }
 
     pub unsafe fn ddi_is_mounted(ptr: *mut c_void) -> i32 {
-        let Some(rsd) = rsd_ref(ptr) else {
+        if ptr.is_null() {
             crate::set_last_error("handle RSD nul");
             return crate::PX_ERR_ARG;
-        };
+        }
+        let rsd = &mut *(ptr as *mut RsdHandshake);
         let rt = match rt() {
             Ok(r) => r,
             Err(e) => { crate::set_last_error(e); return crate::PX_ERR_INTERNAL; }
         };
 
         rt.block_on(async {
-            let mut m = match ImageMounter::connect_rsd(rsd).await {
+            let mut m = match ImageMounter::connect(rsd).await {
                 Ok(m) => m,
                 Err(e) => {
                     crate::set_last_error(format!("mobile_image_mounter : {e}"));
@@ -261,10 +286,10 @@ mod imp {
             };
             match m.copy_devices().await {
                 Ok(d) if !d.is_empty() => {
-                    tracing::info!("DDI montée ({} entrée(s))", d.len());
+                    tracing::info!("DDI montee ({} entree(s))", d.len());
                     crate::PX_OK
                 }
-                Ok(_) => { tracing::info!("aucune DDI montée"); crate::PX_ERR_DDI_NOT_MOUNTED }
+                Ok(_) => { tracing::info!("aucune DDI montee"); crate::PX_ERR_DDI_NOT_MOUNTED }
                 Err(e) => {
                     crate::set_last_error(format!("interrogation DDI : {e}"));
                     crate::PX_ERR_INTERNAL
@@ -274,17 +299,18 @@ mod imp {
     }
 
     pub unsafe fn ddi_mount(ptr: *mut c_void, image: &str, manifest: &str) -> i32 {
-        let Some(rsd) = rsd_ref(ptr) else {
+        if ptr.is_null() {
             crate::set_last_error("handle RSD nul");
             return crate::PX_ERR_ARG;
-        };
+        }
+        let rsd = &mut *(ptr as *mut RsdHandshake);
         let rt = match rt() {
             Ok(r) => r,
             Err(e) => { crate::set_last_error(e); return crate::PX_ERR_INTERNAL; }
         };
 
         rt.block_on(async {
-            let mut mounter = match ImageMounter::connect_rsd(rsd).await {
+            let mut mounter = match ImageMounter::connect(rsd).await {
                 Ok(m) => m,
                 Err(e) => {
                     crate::set_last_error(format!("mobile_image_mounter : {e}"));
@@ -294,7 +320,9 @@ mod imp {
             let (img, man) = match (
                 tokio::fs::read(image).await,
                 tokio::fs::read(manifest).await,
-            ) {
+      
+
+
                 (Ok(i), Ok(m)) => (i, m),
                 (Err(e), _) | (_, Err(e)) => {
                     crate::set_last_error(format!("lecture DDI : {e}"));
@@ -302,10 +330,10 @@ mod imp {
                 }
             };
 
-            tracing::info!("montage DDI : {} o — requête TSS en cours", img.len());
+            tracing::info!("montage DDI : {} o, requete TSS en cours", img.len());
 
             match mounter.mount_personalized(&img, &man, None).await {
-                Ok(()) => { tracing::info!("DDI montée"); crate::PX_OK }
+                Ok(()) => { tracing::info!("DDI montee"); crate::PX_OK }
                 Err(e) => {
                     crate::set_last_error(format!("montage DDI : {e}"));
                     crate::PX_ERR_DDI_MOUNT_FAILED
@@ -315,7 +343,8 @@ mod imp {
     }
 
     pub unsafe fn open(ptr: *mut c_void) -> Result<Session, String> {
-        let rsd = rsd_ref(ptr).ok_or("handle RSD nul")?;
+        if ptr.is_null() { return Err("handle RSD nul".into()); }
+        let raw = SendPtr(ptr);
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -323,24 +352,71 @@ mod imp {
             .build()
             .map_err(|e| format!("runtime tokio : {e}"))?;
 
-        let (server, client) = runtime.block_on(async {
-            let mut server = RemoteServerClient::connect_rsd(rsd).await?;
-            server.read_message(0).await?;
-            let client = LocationSimulationClient::new(&mut server).await?;
-            Ok::<_, idevice::IdeviceError>((server, client))
-        }).map_err(|e| format!("ouverture DVT : {e}"))?;
+        let (tx, mut rx) = mpsc::unbounded_channel::<Cmd>();
+        let (ready_tx, ready_rx) = oneshot::channel::<Result<(), String>>();
 
-        tracing::info!("canal DVT LocationSimulation ouvert");
-        Ok(Session { client, server, runtime })
+        runtime.spawn(async move {
+            let raw = raw;
+            let rsd = unsafe { &mut *(raw.0 as *mut RsdHandshake) };
+
+            let mut server = match RemoteServerClient::connect_rsd(rsd).await {
+                Ok(s) => s,
+                Err(e) => { let _ = ready_tx.send(Err(format!("ouverture DVT : {e}"))); return; }
+            };
+
+            let mut client = match LocationSimulationClient::new(&mut server).await {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = ready_tx.send(Err(format!("canal LocationSimulation : {e}")));
+                    return;
+                }
+            };
+
+            let _ = ready_tx.send(Ok(()));
+            tracing::info!("canal DVT LocationSimulation ouvert");
+
+            while let Some(cmd) = rx.recv().await {
+                match cmd {
+                    Cmd::Set(lat, lon, reply) => {
+                        let r = client.set(lat, lon).await.map_err(|e| e.to_string());
+                        let _ = reply.send(r);
+                    }
+                    Cmd::Clear(reply) => {
+                        let r = client.clear().await.map_err(|e| e.to_string());
+                        let _ = reply.send(r);
+                    }
+                }
+            }
+            // Canal ferme = session fermee. client puis server tombent ici,
+            // et c'est la fermeture du serveur qui rend le GPS reel.
+            tracing::info!("tache DVT terminee");
+        });
+
+        match runtime.block_on(ready_rx) {
+            Ok(Ok(())) => Ok(Session { tx, runtime }),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err("tache DVT interrompue avant d'etre prete".into()),
+        }
+    }
+
+    fn request<F>(s: &mut Session, build: F) -> Result<(), String>
+    where
+        F: FnOnce(oneshot::Sender<Result<(), String>>) -> Cmd,
+    {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        s.tx.send(build(reply_tx))
+            .map_err(|_| "session DVT fermee".to_string())?;
+        match s.runtime.block_on(reply_rx) {
+            Ok(r) => r,
+            Err(_) => Err("aucune reponse de la tache DVT".into()),
+        }
     }
 
     pub fn set(s: &mut Session, lat: f64, lon: f64) -> Result<(), String> {
-        s.runtime.block_on(async { s.client.set(lat, lon).await })
-            .map_err(|e| e.to_string())
+        request(s, |reply| Cmd::Set(lat, lon, reply))
     }
 
     pub fn clear(s: &mut Session) -> Result<(), String> {
-        s.runtime.block_on(async { s.client.clear().await })
-            .map_err(|e| e.to_string())
+        request(s, Cmd::Clear)
     }
 }
