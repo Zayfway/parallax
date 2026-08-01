@@ -61,6 +61,116 @@ enum FFI {
     static func ping() -> Bool { px_ping() == PX_OK }
 }
 
+// MARK: - Certificats
+
+extension FFI {
+
+    /// Nom de machine déclaré au moment de la connexion.
+    ///
+    /// Doit rester identique à `machine_name` dans `account.rs` : c'est le seul
+    /// moyen de reconnaître, dans la liste rendue par Apple, l'emplacement que
+    /// cette app occupe. S'ils divergent, l'écran marque « autre machine » sur
+    /// notre propre certificat.
+    static let machineName = "Parallax"
+
+    /// Certificat de développement iOS tel qu'Apple le décrit.
+    ///
+    /// Décodé du JSON produit par `px_cert_list`. Les champs absents côté Apple
+    /// arrivent en chaîne vide plutôt qu'en `null` — c'est le contrat de
+    /// `CertInfo` côté Rust, et ça évite un `Optional` par champ ici.
+    struct Certificate: Identifiable, Equatable {
+        let name: String
+        let serialNumber: String
+        let machineName: String
+        let certificateID: String
+        let status: String
+        /// `nil` quand Apple ne donne pas de date.
+        let expiry: Date?
+
+        /// Le numéro de série est ce que `px_cert_revoke` attend ; s'il manque,
+        /// on retombe sur l'identifiant pour garder la liste stable à l'écran.
+        var id: String { serialNumber.isEmpty ? certificateID : serialNumber }
+
+        /// Vrai si c'est l'emplacement occupé par cette app.
+        var isOurs: Bool { machineName == FFI.machineName }
+
+        var isExpired: Bool {
+            if let expiry { return expiry < Date.now }
+            return status.caseInsensitiveCompare("Expired") == .orderedSame
+        }
+
+        var isRevoked: Bool {
+            status.caseInsensitiveCompare("Revoked") == .orderedSame
+        }
+    }
+
+    /// Liste les certificats de développement iOS de l'équipe.
+    ///
+    /// **Bloquant** — aller-retour vers Apple. À n'appeler que depuis
+    /// `DispatchQueue.global`, jamais depuis le pool coopératif.
+    static func certificates(session: OpaquePointer) throws -> [Certificate] {
+        guard let raw = px_cert_list(session) else {
+            throw Failure(code: PX_ERR_INTERNAL, detail: lastError)
+        }
+        // Le tas appartient à Rust : Swift rend la chaîne quoi qu'il arrive,
+        // y compris si le décodage lève.
+        defer { px_string_free(raw) }
+
+        let payload = Data(String(cString: raw).utf8)
+        do {
+            return try JSONDecoder().decode([Wire].self, from: payload).map(\.certificate)
+        } catch {
+            throw Failure(
+                code: PX_ERR_INTERNAL,
+                detail: "Réponse d'Apple illisible : \(error.localizedDescription)"
+            )
+        }
+    }
+
+    /// Révoque un certificat par son numéro de série.
+    ///
+    /// **Bloquant** — même règle que `certificates(session:)`.
+    static func revokeCertificate(session: OpaquePointer, serial: String) throws {
+        try check(serial.withCString { px_cert_revoke(session, $0) })
+    }
+
+    /// Miroir exact de `CertInfo` (`account.rs`). Séparé du modèle exposé pour
+    /// que la conversion de date reste au même endroit que le format qui la
+    /// produit — `to_xml_format`, donc ISO 8601 en UTC.
+    private struct Wire: Decodable {
+        let name: String
+        let serialNumber: String
+        let machineName: String
+        let certificateID: String
+        let status: String
+        let expiration: String
+
+        enum CodingKeys: String, CodingKey {
+            case name, status, expiration
+            case serialNumber = "serial_number"
+            case machineName = "machine_name"
+            case certificateID = "certificate_id"
+        }
+
+        private static let iso: ISO8601DateFormatter = {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime]
+            return formatter
+        }()
+
+        var certificate: Certificate {
+            Certificate(
+                name: name,
+                serialNumber: serialNumber,
+                machineName: machineName,
+                certificateID: certificateID,
+                status: status,
+                expiry: expiration.isEmpty ? nil : Self.iso.date(from: expiration)
+            )
+        }
+    }
+}
+
 /// Pont de journalisation Rust → Swift.
 ///
 /// Le callback C ne peut pas capturer de contexte, d'où le singleton. Les

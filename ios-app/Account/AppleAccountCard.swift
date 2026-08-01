@@ -25,15 +25,42 @@ final class AppleAccountModel: ObservableObject {
         var isBusy: Bool { self == .connecting || self == .awaitingCode }
     }
 
+    /// État de la liste de certificats. Séparé de `Phase` : le compte peut être
+    /// connecté alors que la liste est en cours de chargement ou en échec, et
+    /// l'écran Certificats doit pouvoir distinguer les trois.
+    enum Certificates: Equatable {
+        case idle
+        case loading
+        case loaded([FFI.Certificate])
+        case failed(String)
+    }
+
     @Published var email = ""
     @Published var password = ""
     @Published var code = ""
     @Published private(set) var phase: Phase = .idle
     @Published var failure: String?
 
+    @Published private(set) var certificates: Certificates = .idle
+    /// Numéro de série en cours de révocation, pour n'immobiliser que sa carte.
+    @Published private(set) var revoking: String?
+
+    /// Session `PxSignSession` détenue par Rust. Reste privée : l'écran
+    /// Certificats passe par ce modèle plutôt que d'ouvrir une seconde
+    /// connexion, donc personne d'autre n'a besoin du pointeur.
     private var session: OpaquePointer?
 
-    deinit { TwoFactorBridge.reset() }
+    var isConnected: Bool {
+        if case .connected = phase { return true }
+        return false
+    }
+
+    deinit {
+        TwoFactorBridge.reset()
+        if let session { px_sign_session_free(session) }
+    }
+
+    // MARK: - Connexion
 
     func signIn(anisette: String) {
         guard !email.isEmpty, !password.isEmpty else { return }
@@ -45,34 +72,109 @@ final class AppleAccountModel: ObservableObject {
         let email = email, password = password
         let storage = URL.documentsDirectory.appending(path: "account").path
 
-        Task.detached {
+        // Appel C bloquant : jamais dans une Task. `px_apple_signin` attend le
+        // réseau Apple, puis le sémaphore 2FA — donc potentiellement des
+        // minutes. Le pool coopératif n'a qu'un thread par cœur.
+        DispatchQueue.global(qos: .userInitiated).async {
             try? FileManager.default.createDirectory(
                 atPath: storage, withIntermediateDirectories: true
             )
 
-            let handle: UnsafeMutableRawPointer? = email.withCString { e in
+            let handle: OpaquePointer? = email.withCString { e in
                 password.withCString { p in
                     anisette.withCString { a in
                         storage.withCString { s in
-                            UnsafeMutableRawPointer(px_apple_signin(e, p, a, s, TwoFactorBridge.entry))
+                            px_apple_signin(e, p, a, s, TwoFactorBridge.entry)
                         }
                     }
                 }
             }
 
             let detail = FFI.lastError
-            await MainActor.run {
-                if handle != nil {
-                    withAnimation(PX.Motion.acquire) { self.phase = .connected(email) }
-                    self.password = ""
-                    LogBridge.shared.note("compte Apple connecté")
-                } else {
-                    withAnimation(PX.Motion.settle) {
-                        self.phase = .idle
-                        self.failure = detail ?? "Connexion refusée."
-                    }
+            Task { @MainActor in self.finishSignIn(handle, account: email, detail: detail) }
+        }
+    }
+
+    private func finishSignIn(_ handle: OpaquePointer?, account: String, detail: String?) {
+        code = ""
+
+        guard let handle else {
+            withAnimation(PX.Motion.settle) {
+                phase = .idle
+                failure = detail ?? "Connexion refusée."
+            }
+            return
+        }
+
+        // Une reconnexion remplace la session : libérer l'ancienne, sinon Rust
+        // garde son runtime tokio et sa session développeur pour rien.
+        if let previous = session { px_sign_session_free(previous) }
+        session = handle
+
+        withAnimation(PX.Motion.acquire) { phase = .connected(account) }
+        password = ""
+        certificates = .idle
+        LogBridge.shared.note("compte Apple connecté")
+    }
+
+    // MARK: - Certificats
+
+    /// Charge la liste. Sans effet tant qu'aucune session n'est ouverte : c'est
+    /// l'écran qui invite à se connecter, pas une erreur à afficher.
+    func loadCertificates() async {
+        guard let session else { return }
+        if case .loading = certificates { return }
+
+        withAnimation(PX.Motion.settle) { certificates = .loading }
+
+        do {
+            let list = try await onBackground { try FFI.certificates(session: session) }
+            withAnimation(PX.Motion.settle) { certificates = .loaded(list) }
+            LogBridge.shared.note("\(list.count) certificat(s) de développement")
+        } catch {
+            withAnimation(PX.Motion.settle) {
+                certificates = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    /// Révoque, puis recharge — la liste rendue par Apple fait foi, pas notre
+    /// idée de ce qu'elle devrait contenir après coup.
+    func revoke(_ certificate: FFI.Certificate) async {
+        guard let session, revoking == nil else { return }
+        let serial = certificate.serialNumber
+        guard !serial.isEmpty else {
+            withAnimation(PX.Motion.settle) {
+                certificates = .failed("Ce certificat n'a pas de numéro de série : Apple ne permet pas de le révoquer.")
+            }
+            return
+        }
+
+        withAnimation(PX.Motion.settle) { revoking = serial }
+        defer { withAnimation(PX.Motion.settle) { revoking = nil } }
+
+        do {
+            try await onBackground { try FFI.revokeCertificate(session: session, serial: serial) }
+            LogBridge.shared.note("certificat \(serial) révoqué")
+            await loadCertificates()
+        } catch {
+            withAnimation(PX.Motion.settle) {
+                certificates = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    /// Sort l'appel bloquant du pool coopératif, sur le modèle de
+    /// `PairingController.start()`.
+    private func onBackground<T>(_ work: @escaping () throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<T, Error>) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    let value = try work()
+                    continuation.resume(returning: value)
+                } catch {
+                    continuation.resume(throwing: error)
                 }
-                self.code = ""
             }
         }
     }
@@ -140,7 +242,9 @@ extension Notification.Name {
 
 struct AppleAccountCard: View {
 
-    @StateObject private var model = AppleAccountModel()
+    /// Le modèle vient de l'environnement, pas d'un `@StateObject` local : la
+    /// session Apple est unique, et l'écran Certificats s'appuie sur la même.
+    @EnvironmentObject private var model: AppleAccountModel
     @AppStorage("anisetteURL") private var anisette = "https://ani.sidestore.io"
     @State private var shown = false
 

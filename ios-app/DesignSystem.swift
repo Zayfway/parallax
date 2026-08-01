@@ -218,10 +218,16 @@ struct ProminentButtonStyle: ButtonStyle {
 }
 
 struct SecondaryButtonStyle: ButtonStyle {
+    /// Teinte du libellé. Neutre par défaut ; `PX.Color.alert` pour une action
+    /// destructive. Le châssis, lui, ne change pas : c'est le mot qui porte
+    /// l'avertissement, pas le bouton entier — sinon il rivalise avec l'action
+    /// principale de l'écran.
+    var tint: Color = PX.Color.inkMuted
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(PX.Font.display(14, .medium))
-            .foregroundStyle(PX.Color.inkMuted)
+            .foregroundStyle(tint)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
             .background(
