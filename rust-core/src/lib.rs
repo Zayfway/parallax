@@ -24,6 +24,7 @@ use std::sync::Mutex;
 pub mod account;
 pub mod location;
 pub mod pairing;
+pub mod tunnel;
 
 // Réexporte les symboles #[no_mangle] d'idevice-ffi dans notre staticlib unique.
 // Cargo unifie l'instance d'idevice ; vérifier l'absence de doublons avec `nm`
@@ -94,6 +95,7 @@ pub extern "C" fn px_last_error() -> *const c_char {
 ///
 /// `AssertUnwindSafe` est assumé : on ne reprend jamais l'exécution sur l'état
 /// qui a paniqué, on rend une valeur de repli et on remonte l'erreur.
+#[allow(dead_code)] // Utilise uniquement depuis les modules sous features.
 pub(crate) fn guard<T>(name: &str, fallback: T, f: impl FnOnce() -> T) -> T {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
         Ok(value) => value,
@@ -190,7 +192,9 @@ fn build_profile() -> &'static str {
     { "device: complet" }
     #[cfg(all(not(feature = "device"), feature = "device-location", not(feature = "device-account")))]
     { "device: location seule" }
-    #[cfg(all(not(feature = "device"), not(feature = "device-location"), not(feature = "device-account")))]
+    #[cfg(all(not(feature = "device"), not(feature = "device-location"), not(feature = "device-account"), feature = "device-pairing"))]
+    { "device: jumelage seul" }
+    #[cfg(all(not(feature = "device"), not(feature = "device-location"), not(feature = "device-account"), not(feature = "device-pairing")))]
     { "stub: aucun module natif compilé" }
     #[cfg(all(not(feature = "device"), feature = "device-account"))]
     { "device: sideloading (jumelage + compte)" }

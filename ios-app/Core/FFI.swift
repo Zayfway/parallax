@@ -61,6 +61,22 @@ enum FFI {
     static func ping() -> Bool { px_ping() == PX_OK }
 }
 
+// MARK: - Tunnel
+
+extension FFI {
+
+    /// Services annoncés par RSD, `nom → port`. Vide si le tunnel est mort.
+    ///
+    /// Utile en soi : la présence de `com.apple.instruments.dtservicehub`
+    /// signifie que l'image développeur est montée.
+    static func tunnelServices(tunnel: OpaquePointer) -> [String: Int] {
+        guard let raw = px_tunnel_services(tunnel) else { return [:] }
+        defer { px_string_free(raw) }
+        let payload = Data(String(cString: raw).utf8)
+        return (try? JSONDecoder().decode([String: Int].self, from: payload)) ?? [:]
+    }
+}
+
 // MARK: - Certificats
 
 extension FFI {

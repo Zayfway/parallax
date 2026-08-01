@@ -163,12 +163,13 @@ final class LocationEngine: ObservableObject {
         }
 
         state = .connecting
-        guard let rsd = connection.rsdHandle else {
-            state = .failed("Tunnel non établi. Vérifie que LocalDevVPN est connecté.")
+        guard let rsd = connection.rsdHandle, let adapter = connection.adapterHandle else {
+            state = .failed("Tunnel non établi. Passe par l'onglet Jumelage.")
             return
         }
 
-        guard let opened = px_location_open(nil, rsd) else {
+        // L'adaptateur est le premier argument : `imp::open` rejette un nul.
+        guard let opened = px_location_open(adapter, rsd) else {
             state = .failed(lastRustError() ?? "Ouverture du canal DVT impossible")
             return
         }
@@ -273,7 +274,8 @@ final class LocationEngine: ObservableObject {
             return
         }
 
-        guard let rsd = connection.rsdHandle, let opened = px_location_open(nil, rsd) else {
+        guard let rsd = connection.rsdHandle, let adapter = connection.adapterHandle,
+              let opened = px_location_open(adapter, rsd) else {
             await noteAsync(lastRustError() ?? "réouverture DVT échouée")
             return
         }
