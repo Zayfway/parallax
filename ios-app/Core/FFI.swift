@@ -118,7 +118,16 @@ extension FFI {
 
         let payload = Data(String(cString: raw).utf8)
         do {
-            return try JSONDecoder().decode([Wire].self, from: payload).map(\.certificate)
+            // Un formateur local plutôt qu'un `static` partagé : en mode Swift 6
+            // une globale non-`Sendable` ne compile pas, et l'annoter
+            // `nonisolated(unsafe)` serait affirmer une garantie qu'on n'a pas.
+            // La liste tient en quelques éléments, l'allocation ne se voit pas.
+            let dates = ISO8601DateFormatter()
+            dates.formatOptions = [.withInternetDateTime]
+
+            return try JSONDecoder()
+                .decode([Wire].self, from: payload)
+                .map { $0.certificate(parsingDatesWith: dates) }
         } catch {
             throw Failure(
                 code: PX_ERR_INTERNAL,
@@ -152,20 +161,14 @@ extension FFI {
             case certificateID = "certificate_id"
         }
 
-        private static let iso: ISO8601DateFormatter = {
-            let formatter = ISO8601DateFormatter()
-            formatter.formatOptions = [.withInternetDateTime]
-            return formatter
-        }()
-
-        var certificate: Certificate {
+        func certificate(parsingDatesWith dates: ISO8601DateFormatter) -> Certificate {
             Certificate(
                 name: name,
                 serialNumber: serialNumber,
                 machineName: machineName,
                 certificateID: certificateID,
                 status: status,
-                expiry: expiration.isEmpty ? nil : Self.iso.date(from: expiration)
+                expiry: expiration.isEmpty ? nil : dates.date(from: expiration)
             )
         }
     }
