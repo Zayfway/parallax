@@ -30,7 +30,7 @@ default = []
 device  = ["device-location", "device-pairing", "device-account"]
 
 device-location = ["dep:idevice", "dep:tokio"]
-device-pairing  = ["dep:idevice", "dep:tokio"]
+device-pairing  = ["dep:idevice", "dep:tokio", "dep:mdns-sd"]
 device-account  = ["dep:isideload", "dep:tokio"]
 
 [dependencies]
@@ -38,7 +38,8 @@ tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
 once_cell          = "1"
 
-tokio = { version = "1", features = ["rt-multi-thread", "fs", "time", "sync", "macros"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "fs", "time", "sync", "macros", "net"], optional = true }
+mdns-sd = { version = "0.19", optional = true }
 
 # Épinglé sur révision git, pas sur une plage sémantique.
 # Cette révision est celle de StikPair (host RPPairing) et StikDebug (tunnel).

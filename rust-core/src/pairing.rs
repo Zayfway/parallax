@@ -98,38 +98,97 @@ pub unsafe extern "C" fn px_pairing_validate(path: *const c_char) -> c_int {
     }
 }
 
-// ⚠️ JAMAIS COMPILÉE — portage de `run_host` de StikPair. Vérifier contre la
-// révision épinglée avant d'activer `device-pairing`.
+// Porté depuis pairable_host.rs d'idevice-ffi (révision 7bd551c1).
 #[cfg(feature = "device-pairing")]
 mod imp {
     use super::PxPinCallback;
+    use idevice::remote_pairing::{
+        PAIRABLE_HOST_SERVICE_TYPE, PairableHost, PairableHostInfo, RpPairingFile, RpPairingSocket,
+    };
+    use mdns_sd::{ServiceDaemon, ServiceInfo};
     use std::ffi::CString;
+    use std::net::Ipv4Addr;
 
     pub fn run_host(name: &str, out_path: &str, on_pin: PxPinCallback) -> i32 {
         let rt = match tokio::runtime::Runtime::new() {
             Ok(r) => r,
-            Err(e) => { crate::set_last_error(format!("runtime tokio : {e}")); return crate::PX_ERR_INTERNAL; }
+            Err(e) => {
+                crate::set_last_error(format!("runtime tokio : {e}"));
+                return crate::PX_ERR_INTERNAL;
+            }
         };
 
-        rt.block_on(async {
-            let emit = |pin: String| {
-                if let Ok(c) = CString::new(pin) { on_pin(c.as_ptr()); }
-            };
+        let name = name.to_string();
+        let out_path = out_path.to_string();
 
-            match idevice::remote_pairing::host::run(name, emit).await {
-                Ok(record) => {
-                    if let Err(e) = tokio::fs::write(out_path, &record).await {
-                        crate::set_last_error(format!("écriture du fichier : {e}"));
-                        return crate::PX_ERR_INTERNAL;
-                    }
-                    tracing::info!("jumelage terminé : {} → {} o", out_path, record.len());
-                    crate::PX_OK
+        let result: Result<usize, String> = rt.block_on(async move {
+            // On lie d'abord, pour annoncer le vrai port.
+            let listener = tokio::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0))
+                .await
+                .map_err(|e| format!("bind : {e}"))?;
+            let port = listener
+                .local_addr()
+                .map_err(|e| format!("adresse locale : {e}"))?
+                .port();
+
+            let mut pairing_file = RpPairingFile::generate(&name);
+            // iOS attend un identifiant de Mac : il traite l'hote comme un ordinateur.
+            let host_info = PairableHostInfo::generate(&name, "Mac17,7");
+            let service_identifier = pairing_file.identifier.clone();
+
+            let mdns = ServiceDaemon::new().map_err(|e| format!("demon mDNS : {e}"))?;
+            let _ = mdns.set_service_name_len_max(30);
+            let hostname = format!("parallax-{}.local.", &service_identifier[..8]);
+            let txt = host_info.mdns_txt_records(&service_identifier);
+            let properties: Vec<(&str, &str)> =
+                txt.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+            let service_info = ServiceInfo::new(
+                PAIRABLE_HOST_SERVICE_TYPE,
+                &service_identifier,
+                &hostname,
+                "",
+                port,
+                &properties[..],
+            )
+            .map_err(|e| format!("info service mDNS : {e}"))?
+            .enable_addr_auto();
+            mdns.register(service_info)
+                .map_err(|e| format!("enregistrement mDNS : {e}"))?;
+
+            tracing::info!("hote jumelable annonce sur le port {port}");
+
+            let (stream, _peer) = listener
+                .accept()
+                .await
+                .map_err(|e| format!("accept : {e}"))?;
+
+            let socket = RpPairingSocket::new_device(stream);
+            let mut host = PairableHost::new(socket, host_info);
+
+            host.accept(&mut pairing_file, move |pin| async move {
+                if let Ok(c) = CString::new(pin) {
+                    on_pin(c.as_ptr());
                 }
-                Err(e) => {
-                    crate::set_last_error(format!("host de jumelage : {e}"));
-                    crate::PX_ERR_INTERNAL
-                }
+            })
+            .await
+            .map_err(|e| format!("hote de jumelage : {e}"))?;
+
+            let bytes = pairing_file.to_bytes();
+            let len = bytes.len();
+            tokio::fs::write(&out_path, &bytes)
+                .await
+                .map_err(|e| format!("ecriture du fichier : {e}"))?;
+
+            tracing::info!("jumelage termine : {} -> {} o", out_path, len);
+            Ok(len)
+        });
+
+        match result {
+            Ok(_) => crate::PX_OK,
+            Err(e) => {
+                crate::set_last_error(e);
+                crate::PX_ERR_INTERNAL
             }
-        })
+        }
     }
 }
