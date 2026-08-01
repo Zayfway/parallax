@@ -25,6 +25,8 @@ jobs:
     # Runner macOS indispensable : le SDK iOS et xcodebuild n'existent que là.
     runs-on: macos-15
     timeout-minutes: 45
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
