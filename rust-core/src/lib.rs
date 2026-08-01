@@ -170,10 +170,12 @@ pub extern "C" fn px_build_profile() -> *const c_char {
 fn build_profile() -> &'static str {
     #[cfg(feature = "device")]
     { "device: complet" }
-    #[cfg(all(not(feature = "device"), feature = "device-location"))]
+    #[cfg(all(not(feature = "device"), feature = "device-location", not(feature = "device-account")))]
     { "device: location seule" }
-    #[cfg(all(not(feature = "device"), not(feature = "device-location")))]
+    #[cfg(all(not(feature = "device"), not(feature = "device-location"), not(feature = "device-account")))]
     { "stub: aucun module natif compilé" }
+    #[cfg(all(not(feature = "device"), feature = "device-account"))]
+    { "device: sideloading (jumelage + compte)" }
 }
 
 /// Test de vie de bout en bout : Swift appelle, Rust journalise, Swift reçoit
