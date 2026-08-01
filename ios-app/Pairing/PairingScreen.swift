@@ -180,25 +180,3 @@ private struct Step<Content: View>: View {
         }
     }
 }
-       }
-    }
-}
-
-struct SecondaryButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(PX.Font.display(14, .medium))
-            .foregroundStyle(PX.Color.inkMuted)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: PX.Radius.control, style: .continuous)
-                    .fill(.white.opacity(0.05))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: PX.Radius.control, style: .continuous)
-                    .strokeBorder(PX.Color.horizon, lineWidth: 1)
-            )
-            .opacity(configuration.isPressed ? 0.7 : 1)
-    }
-}

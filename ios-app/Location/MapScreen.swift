@@ -283,8 +283,3 @@ private enum MapStyleChoice: CaseIterable {
         }
     }
 }
-brid: .hybrid(elevation: .realistic)
-        case .imagery: .imagery(elevation: .realistic)
-        }
-    }
-}

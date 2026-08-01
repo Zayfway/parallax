@@ -217,12 +217,3 @@ struct SegmentedRow<T: Hashable>: View {
         )
     }
 }
-ctangle(cornerRadius: PX.Radius.control, style: .continuous)
-                .fill(PX.Color.night.opacity(0.55))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: PX.Radius.control, style: .continuous)
-                .strokeBorder(PX.Color.horizon, lineWidth: 1)
-        )
-    }
-}

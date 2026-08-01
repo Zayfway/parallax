@@ -141,6 +141,3 @@ struct SettingsScreen: View {
         .glassCard()
     }
 }
-ssCard()
-    }
-}

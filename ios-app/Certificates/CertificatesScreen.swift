@@ -147,25 +147,3 @@ private struct Row: View {
         }
     }
 }
-       }
-    }
-}
-
-struct Tag: View {
-    let text: String, color: Color, icon: String
-    init(_ text: String, color: Color, icon: String) {
-        self.text = text; self.color = color; self.icon = icon
-    }
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: icon).font(.system(size: 10))
-            Text(text).font(PX.Font.display(11, .semibold))
-        }
-        .foregroundStyle(color)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(Capsule().fill(color.opacity(0.14)))
-        .overlay(Capsule().strokeBorder(color.opacity(0.30), lineWidth: 1))
-    }
-}
