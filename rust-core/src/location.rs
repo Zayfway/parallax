@@ -320,6 +320,8 @@ mod imp {
             let (img, man) = match (
                 tokio::fs::read(image).await,
                 tokio::fs::read(manifest).await,
+            ) {
+            ) {
       
 
 
