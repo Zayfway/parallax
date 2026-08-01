@@ -168,7 +168,7 @@ final class LocationEngine: ObservableObject {
             return
         }
 
-        guard let opened = px_location_open(rsd) else {
+        guard let opened = px_location_open(nil, rsd) else {
             state = .failed(lastRustError() ?? "Ouverture du canal DVT impossible")
             return
         }
@@ -273,7 +273,7 @@ final class LocationEngine: ObservableObject {
             return
         }
 
-        guard let rsd = connection.rsdHandle, let opened = px_location_open(rsd) else {
+        guard let rsd = connection.rsdHandle, let opened = px_location_open(nil, rsd) else {
             await noteAsync(lastRustError() ?? "réouverture DVT échouée")
             return
         }
