@@ -55,10 +55,12 @@ final class AppleAccountModel: ObservableObject {
         return false
     }
 
-    deinit {
-        TwoFactorBridge.reset()
-        if let session { px_sign_session_free(session) }
-    }
+    /// La session n'est **pas** libérée ici. En Swift 6 un `deinit` est
+    /// nonisolated et ne peut pas lire une propriété non-`Sendable` de la
+    /// classe. Ce n'est pas une fuite en pratique : le modèle vit aussi
+    /// longtemps que l'app, et le seul cas où une session est remplacée — une
+    /// reconnexion — libère l'ancienne dans `finishSignIn`.
+    deinit { TwoFactorBridge.reset() }
 
     // MARK: - Connexion
 
