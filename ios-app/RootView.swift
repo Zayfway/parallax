@@ -17,6 +17,9 @@ struct RootView: View {
     @StateObject private var connection: DeviceConnection
     @StateObject private var pairing: PairingController
     @StateObject private var location: LocationEngine
+    /// Une seule session Apple pour toute l'app : la carte de connexion et
+    /// l'écran Certificats la partagent, au lieu d'ouvrir deux connexions.
+    @StateObject private var account = AppleAccountModel()
 
     init() {
         let connection = DeviceConnection()
@@ -47,6 +50,7 @@ struct RootView: View {
         .environmentObject(connection)
         .environmentObject(pairing)
         .environmentObject(location)
+        .environmentObject(account)
         .tint(live ? PX.Color.signal : PX.Color.azimuth)
         .animation(PX.Motion.settle, value: live)
         .task {

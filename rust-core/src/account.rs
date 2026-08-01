@@ -152,7 +152,17 @@ mod imp {
     pub struct Session {
         pub sideloader: Sideloader,
         pub runtime: tokio::runtime::Runtime,
+        /// Même dossier que celui passé au `SideloaderBuilder`. Les champs du
+        /// `Sideloader` sont privés, donc pour générer un certificat hors du
+        /// chemin `sign_app` il faut reconstruire un `FsStorage` identique —
+        /// c'est là que vit la clé privée, indexée par courriel.
+        pub storage_dir: PathBuf,
     }
+
+    /// Nom de machine déclaré à Apple. Doit rester identique à
+    /// `FFI.machineName` côté Swift, qui s'en sert pour reconnaître, dans la
+    /// liste renvoyée par Apple, l'emplacement occupé par cette app.
+    pub const MACHINE_NAME: &str = "Parallax";
 
     pub fn sign_in(
         email: &str, password: &str, _anisette: &str, storage: &str,
@@ -194,13 +204,48 @@ mod imp {
                         teams.first().map(|t| t.team_id.clone())
                     }))
                     .storage(Box::new(FsStorage::new(storage_path)))
-                    .machine_name("Parallax".to_string())
+                    .machine_name(MACHINE_NAME.to_string())
                     .build(),
             )
         })?;
 
         tracing::info!("compte Apple connecte");
-        Ok(Session { sideloader, runtime })
+        Ok(Session { sideloader, runtime, storage_dir: PathBuf::from(storage) })
+    }
+
+    /// Récupère le certificat de cette machine, ou en demande un neuf.
+    ///
+    /// `MaxCertsBehavior::Error` et non `Revoke` : quand le quota est atteint,
+    /// c'est à l'utilisateur de choisir ce qu'il sacrifie depuis l'écran, pas
+    /// à nous de révoquer dans son dos. Le message d'Apple remonte tel quel.
+    ///
+    /// Rend le numéro de série, le même que celui listé par `list_certs`.
+    pub fn create_cert(s: &mut Session) -> Result<String, String> {
+        use isideload::sideload::builder::MaxCertsBehavior;
+        use isideload::sideload::cert_identity::CertificateIdentity;
+
+        let dir = s.storage_dir.clone();
+        s.runtime.block_on(async {
+            let team = s.sideloader.get_team().await
+                .map_err(|e| format!("equipe : {e}"))?;
+            let email = s.sideloader.get_email().to_string();
+            let storage = FsStorage::new(dir);
+
+            let identity = CertificateIdentity::retrieve(
+                MACHINE_NAME,
+                &email,
+                s.sideloader.get_dev_session(),
+                &team,
+                &storage,
+                &MaxCertsBehavior::Error,
+            )
+            .await
+            .map_err(|e| format!("certificat : {e}"))?;
+
+            let serial = identity.get_serial_number();
+            tracing::info!("certificat disponible : {serial}");
+            Ok::<_, String>(serial)
+        })
     }
 
     pub fn sign(s: &mut Session, ipa: &str) -> Result<String, String> {
@@ -221,6 +266,10 @@ mod imp {
         certificate_id: String,
         status: String,
         expiration: String,
+        /// Quota déclaré par Apple pour ce type de certificat. `None` quand
+        /// Apple ne le renseigne pas — c'est la seule source honnête du
+        /// nombre d'emplacements, qui n'est pas trois sur un compte payant.
+        max_active_certs: Option<i64>,
     }
 
     impl From<&DevelopmentCertificate> for CertInfo {
@@ -234,6 +283,8 @@ mod imp {
                 status: s(&c.status),
                 expiration: c.expiration_date.as_ref()
                     .map(|d| d.to_xml_format()).unwrap_or_default(),
+                max_active_certs: c.certificate_type.as_ref()
+                    .and_then(|t| t.max_active_certs),
             }
         }
     }
@@ -278,12 +329,14 @@ pub unsafe extern "C" fn px_cert_list(session: *mut PxSignSession) -> *mut c_cha
     }
     #[cfg(feature = "device-account")]
     {
-        match imp::list_certs(&mut (*session).inner) {
-            Ok(json) => std::ffi::CString::new(json)
-                .map(|c| c.into_raw())
-                .unwrap_or(ptr::null_mut()),
-            Err(e) => { set_last_error(e); ptr::null_mut() }
-        }
+        guard("px_cert_list", ptr::null_mut(), || {
+            match imp::list_certs(&mut (*session).inner) {
+                Ok(json) => std::ffi::CString::new(json)
+                    .map(|c| c.into_raw())
+                    .unwrap_or(ptr::null_mut()),
+                Err(e) => { set_last_error(e); ptr::null_mut() }
+            }
+        })
     }
     #[cfg(not(feature = "device-account"))]
     {
@@ -311,16 +364,53 @@ pub unsafe extern "C" fn px_cert_revoke(
     }
     #[cfg(feature = "device-account")]
     {
-        match imp::revoke_cert(&mut (*session).inner, &serial) {
-            Ok(()) => PX_OK,
-            Err(e) => { set_last_error(e); PX_ERR_INTERNAL }
-        }
+        guard("px_cert_revoke", PX_ERR_INTERNAL, || {
+            match imp::revoke_cert(&mut (*session).inner, &serial) {
+                Ok(()) => PX_OK,
+                Err(e) => { set_last_error(e); PX_ERR_INTERNAL }
+            }
+        })
     }
     #[cfg(not(feature = "device-account"))]
     {
         let _ = serial;
         set_last_error("px_cert_revoke : compile sans --features device-account");
         PX_ERR_NOT_BUILT
+    }
+}
+
+/// Récupère le certificat de développement de cette machine, ou en demande un
+/// neuf à Apple. Rend son numéro de série, à libérer par `px_string_free`.
+/// NULL en cas d'échec — lire `px_last_error`.
+///
+/// Idempotent : si un certificat correspondant à la clé privée locale existe
+/// déjà, il est réutilisé plutôt que dupliqué. Quand le quota est atteint,
+/// échoue avec le message d'Apple au lieu de révoquer quoi que ce soit.
+///
+/// # Safety
+/// `session` doit venir de `px_apple_signin`.
+#[no_mangle]
+pub unsafe extern "C" fn px_cert_create(session: *mut PxSignSession) -> *mut c_char {
+    clear_last_error();
+    if session.is_null() {
+        set_last_error("px_cert_create : session nulle");
+        return ptr::null_mut();
+    }
+    #[cfg(feature = "device-account")]
+    {
+        guard("px_cert_create", ptr::null_mut(), || {
+            match imp::create_cert(&mut (*session).inner) {
+                Ok(serial) => std::ffi::CString::new(serial)
+                    .map(|c| c.into_raw())
+                    .unwrap_or(ptr::null_mut()),
+                Err(e) => { set_last_error(e); ptr::null_mut() }
+            }
+        })
+    }
+    #[cfg(not(feature = "device-account"))]
+    {
+        set_last_error("px_cert_create : compilé sans --features device-account");
+        ptr::null_mut()
     }
 }
 
