@@ -325,6 +325,10 @@ struct PairingScreen: View {
                     Label("Exporter le fichier", systemImage: "square.and.arrow.up")
                 }
                 .buttonStyle(ProminentButtonStyle())
+                ShareLink(item: PairingStore.fileURL) {
+                    Label("Exporter le fichier", systemImage: "square.and.arrow.up")
+                }
+                .buttonStyle(ProminentButtonStyle())
                 Button {
                     Task { await pairing.start() }
                 } label: {
