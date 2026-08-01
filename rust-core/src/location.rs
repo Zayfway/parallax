@@ -41,7 +41,7 @@ pub unsafe extern "C" fn px_ddi_is_mounted(rsd: *mut c_void) -> c_int {
     { imp::ddi_is_mounted(rsd) }
     #[cfg(not(feature = "device-location"))]
     {
-        let _ = (adapter, rsd);
+        let _ = rsd;
         set_last_error("px_ddi_is_mounted : compilé sans --features device-location");
         PX_ERR_NOT_BUILT
     }
@@ -103,7 +103,7 @@ pub unsafe extern "C" fn px_location_open(
     }
     #[cfg(not(feature = "device-location"))]
     {
-        let _ = (adapter, rsd);
+        let _ = rsd;
         // Le stub retourne une session utilisable : l'interface reste
         // pilotable en démo — marqueur, joystick et GPX compris — ce qui
         // permet de juger l'ergonomie avant que le natif ne soit branché.
