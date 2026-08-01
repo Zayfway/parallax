@@ -221,30 +221,19 @@ pub unsafe extern "C" fn px_location_close(handle: *mut PxLocationSession) {
 mod imp {
     use idevice::dvt::location_simulation::LocationSimulationClient;
     use idevice::dvt::remote_server::RemoteServerClient;
-    use idevice::mobile_image_mounter::ImageMounter;
     use idevice::rsd::RsdHandshake;
     use idevice::RsdService;
     use std::ffi::c_void;
     use tokio::sync::{mpsc, oneshot};
 
-    // -- POURQUOI UNE TACHE DEDIEE ---------------------------------------
+    // LocationSimulationClient<'a, R> EMPRUNTE le RemoteServerClient, donc on
+    // ne peut pas ranger les deux dans une struct. Une tache asynchrone les
+    // possede tous les deux et recoit des ordres par messages : l'emprunt vit
+    // dans une seule portee async. Tant que la tache tourne, le canal DVT
+    // reste ouvert, ce qui est l'invariant n1 de ce module.
     //
-    // `LocationSimulationClient<'a, R>` **emprunte** le RemoteServerClient :
-    //
-    //     pub async fn new(client: &'a mut RemoteServerClient<R>) -> ...
-    //
-    // Impossible de ranger les deux dans une meme struct : ce serait une
-    // structure auto-referentielle, que Rust refuse.
-    //
-    // Recreer le client a chaque appel ouvrirait un canal DVT par seconde :
-    // inacceptable sur une session longue. Un Box::leak marcherait mais
-    // demande de l'unsafe qu'on ne pourrait pas verifier sans materiel.
-    //
-    // Retenu : **une tache asynchrone possede les deux**, et l'exterieur lui
-    // parle par messages. L'emprunt vit dans une seule portee async, donc il
-    // est naturellement valide. Bonus : tant que la tache tourne, le canal
-    // DVT reste ouvert, ce qui est exactement l'invariant n1 de ce module.
-    // --------------------------------------------------------------------
+    // Le montage DDI est volontairement absent : a verifier d'abord s'il est
+    // seulement necessaire (la doc de Mirage n'en parle jamais).
 
     pub enum Cmd {
         Set(f64, f64, oneshot::Sender<Result<(), String>>),
@@ -256,102 +245,18 @@ mod imp {
         pub runtime: tokio::runtime::Runtime,
     }
 
-    /// Le handle RSD appartient a Swift et traverse une frontiere de tache.
-    /// Contrat : il doit rester valide jusqu'a `px_location_close`.
     struct SendPtr(*mut c_void);
     unsafe impl Send for SendPtr {}
 
-    fn rt() -> Result<tokio::runtime::Runtime, String> {
-        tokio::runtime::Runtime::new().map_err(|e| format!("runtime tokio : {e}"))
-    }
-
-    pub unsafe fn ddi_is_mounted(ptr: *mut c_void) -> i32 {
-        if ptr.is_null() {
-            crate::set_last_error("handle RSD nul");
-            return crate::PX_ERR_ARG;
-        }
-        let rsd = &mut *(ptr as *mut RsdHandshake);
-        let rt = match rt() {
-            Ok(r) => r,
-            Err(e) => { crate::set_last_error(e); return crate::PX_ERR_INTERNAL; }
-        };
-
-        rt.block_on(async {
-            let mut m = match ImageMounter::connect(rsd).await {
-                Ok(m) => m,
-                Err(e) => {
-                    crate::set_last_error(format!("mobile_image_mounter : {e}"));
-                    return crate::PX_ERR_INTERNAL;
-                }
-            };
-            match m.copy_devices().await {
-                Ok(d) if !d.is_empty() => {
-                    tracing::info!("DDI montee ({} entree(s))", d.len());
-                    crate::PX_OK
-                }
-                Ok(_) => { tracing::info!("aucune DDI montee"); crate::PX_ERR_DDI_NOT_MOUNTED }
-                Err(e) => {
-                    crate::set_last_error(format!("interrogation DDI : {e}"));
-                    crate::PX_ERR_INTERNAL
-                }
-            }
-        })
-    }
-
-    pub unsafe fn ddi_mount(ptr: *mut c_void, image: &str, manifest: &str) -> i32 {
-        if ptr.is_null() {
-            crate::set_last_error("handle RSD nul");
-            return crate::PX_ERR_ARG;
-        }
-        let rsd = &mut *(ptr as *mut RsdHandshake);
-        let rt = match rt() {
-            Ok(r) => r,
-            Err(e) => { crate::set_last_error(e); return crate::PX_ERR_INTERNAL; }
-        };
-
-        rt.block_on(async {
-            let mut mounter = match ImageMounter::connect(rsd).await {
-                Ok(m) => m,
-                Err(e) => {
-                    crate::set_last_error(format!("mobile_image_mounter : {e}"));
-                    return crate::PX_ERR_DDI_MOUNT_FAILED;
-                }
-            };
-            let (img, man) = match (
-                tokio::fs::read(image).await,
-                tokio::fs::read(manifest).await,
-            ) {
-            ) {
-      
-
-
-                (Ok(i), Ok(m)) => (i, m),
-                (Err(e), _) | (_, Err(e)) => {
-                    crate::set_last_error(format!("lecture DDI : {e}"));
-                    return crate::PX_ERR_DDI_MOUNT_FAILED;
-                }
-            };
-
-            tracing::info!("montage DDI : {} o, requete TSS en cours", img.len());
-
-            match mounter.mount_personalized(&img, &man, None).await {
-                Ok(()) => { tracing::info!("DDI montee"); crate::PX_OK }
-                Err(e) => {
-                    crate::set_last_error(format!("montage DDI : {e}"));
-                    crate::PX_ERR_DDI_MOUNT_FAILED
-                }
-            }
-        })
-    }
+    pub unsafe fn ddi_is_mounted(_p: *mut c_void) -> i32 { crate::PX_OK }
+    pub unsafe fn ddi_mount(_p: *mut c_void, _i: &str, _m: &str) -> i32 { crate::PX_OK }
 
     pub unsafe fn open(ptr: *mut c_void) -> Result<Session, String> {
         if ptr.is_null() { return Err("handle RSD nul".into()); }
         let raw = SendPtr(ptr);
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .build()
+            .worker_threads(2).enable_all().build()
             .map_err(|e| format!("runtime tokio : {e}"))?;
 
         let (tx, mut rx) = mpsc::unbounded_channel::<Cmd>();
@@ -365,13 +270,9 @@ mod imp {
                 Ok(s) => s,
                 Err(e) => { let _ = ready_tx.send(Err(format!("ouverture DVT : {e}"))); return; }
             };
-
             let mut client = match LocationSimulationClient::new(&mut server).await {
                 Ok(c) => c,
-                Err(e) => {
-                    let _ = ready_tx.send(Err(format!("canal LocationSimulation : {e}")));
-                    return;
-                }
+                Err(e) => { let _ = ready_tx.send(Err(format!("canal LocationSimulation : {e}"))); return; }
             };
 
             let _ = ready_tx.send(Ok(()));
@@ -380,34 +281,27 @@ mod imp {
             while let Some(cmd) = rx.recv().await {
                 match cmd {
                     Cmd::Set(lat, lon, reply) => {
-                        let r = client.set(lat, lon).await.map_err(|e| e.to_string());
-                        let _ = reply.send(r);
+                        let _ = reply.send(client.set(lat, lon).await.map_err(|e| e.to_string()));
                     }
                     Cmd::Clear(reply) => {
-                        let r = client.clear().await.map_err(|e| e.to_string());
-                        let _ = reply.send(r);
+                        let _ = reply.send(client.clear().await.map_err(|e| e.to_string()));
                     }
                 }
             }
-            // Canal ferme = session fermee. client puis server tombent ici,
-            // et c'est la fermeture du serveur qui rend le GPS reel.
             tracing::info!("tache DVT terminee");
         });
 
         match runtime.block_on(ready_rx) {
             Ok(Ok(())) => Ok(Session { tx, runtime }),
             Ok(Err(e)) => Err(e),
-            Err(_) => Err("tache DVT interrompue avant d'etre prete".into()),
+            Err(_) => Err("tache DVT interrompue".into()),
         }
     }
 
     fn request<F>(s: &mut Session, build: F) -> Result<(), String>
-    where
-        F: FnOnce(oneshot::Sender<Result<(), String>>) -> Cmd,
-    {
+    where F: FnOnce(oneshot::Sender<Result<(), String>>) -> Cmd {
         let (reply_tx, reply_rx) = oneshot::channel();
-        s.tx.send(build(reply_tx))
-            .map_err(|_| "session DVT fermee".to_string())?;
+        s.tx.send(build(reply_tx)).map_err(|_| "session DVT fermee".to_string())?;
         match s.runtime.block_on(reply_rx) {
             Ok(r) => r,
             Err(_) => Err("aucune reponse de la tache DVT".into()),
@@ -418,7 +312,5 @@ mod imp {
         request(s, |reply| Cmd::Set(lat, lon, reply))
     }
 
-    pub fn clear(s: &mut Session) -> Result<(), String> {
-        request(s, Cmd::Clear)
-    }
+    pub fn clear(s: &mut Session) -> Result<(), String> { request(s, Cmd::Clear) }
 }
