@@ -59,10 +59,13 @@ struct SideloadScreen: View {
     @State private var customIPA: URL?
     @State private var customName = ""
     @State private var customURLText = ""
-    @State private var showingIPAImporter = false
     /// Tweaks (.dylib) à injecter dans l'IPA « Autre » avant signature.
     @State private var tweaks: [URL] = []
-    @State private var showingTweakImporter = false
+    /// Un seul fileImporter partagé — deux `.fileImporter` sur une même vue
+    /// entrent en conflit dans SwiftUI. On mémorise ce qu'on importe.
+    private enum ImportKind { case ipa, dylib }
+    @State private var importKind: ImportKind = .ipa
+    @State private var showingImporter = false
 
     enum InstallTarget: String, CaseIterable {
         case sideStore = "SideStore"
@@ -256,47 +259,23 @@ struct SideloadScreen: View {
             guard installing, let last = lines.last else { return }
             absorb(last)
         }
+        // UN SEUL fileImporter : deux `.fileImporter` sur la même vue entrent en
+        // conflit dans SwiftUI (l'un ne rend jamais son résultat). On bascule le
+        // type de fichier selon ce qu'on importe.
         .fileImporter(
-            isPresented: $showingIPAImporter,
-            allowedContentTypes: [UTType(filenameExtension: "ipa") ?? .data]
-        ) { result in
-            do {
-                let src = try result.get()
-                guard src.startAccessingSecurityScopedResource() else {
-                    failure = "Accès au fichier refusé."
-                    return
-                }
-                defer { src.stopAccessingSecurityScopedResource() }
-                // L'accès sécurisé ne survit pas à ce callback : on copie tout de
-                // suite en zone temporaire, c'est cette copie qu'on signera.
-                let dest = URL.temporaryDirectory.appending(path: src.lastPathComponent)
-                try? FileManager.default.removeItem(at: dest)
-                try FileManager.default.copyItem(at: src, to: dest)
-                withAnimation(PX.Motion.settle) {
-                    customIPA = dest
-                    customName = src.lastPathComponent
-                    customURLText = ""
-                    failure = nil
-                }
-            } catch {
-                failure = error.localizedDescription
-            }
-        }
-        .fileImporter(
-            isPresented: $showingTweakImporter,
-            allowedContentTypes: [UTType(filenameExtension: "dylib") ?? .data],
+            isPresented: $showingImporter,
+            allowedContentTypes: importKind == .ipa
+                ? [UTType(filenameExtension: "ipa") ?? .data]
+                : [UTType(filenameExtension: "dylib") ?? .data],
             allowsMultipleSelection: true
         ) { result in
             do {
-                for src in try result.get() {
-                    guard src.startAccessingSecurityScopedResource() else { continue }
-                    defer { src.stopAccessingSecurityScopedResource() }
-                    let dest = URL.temporaryDirectory.appending(path: src.lastPathComponent)
-                    try? FileManager.default.removeItem(at: dest)
-                    try FileManager.default.copyItem(at: src, to: dest)
-                    if !tweaks.contains(dest) {
-                        withAnimation(PX.Motion.settle) { tweaks.append(dest) }
-                    }
+                let urls = try result.get()
+                switch importKind {
+                case .ipa:
+                    if let first = urls.first { try importIPA(first) }
+                case .dylib:
+                    for url in urls { try importDylib(url) }
                 }
                 failure = nil
             } catch {
@@ -595,7 +574,7 @@ struct SideloadScreen: View {
 
             if target == .custom {
                 VStack(alignment: .leading, spacing: PX.Space.tight) {
-                    Button { showingIPAImporter = true } label: {
+                    Button { importKind = .ipa; showingImporter = true } label: {
                         Label(customName.isEmpty ? "Choisir un fichier .ipa" : customName,
                               systemImage: customName.isEmpty ? "folder" : "doc.fill")
                     }
@@ -636,7 +615,7 @@ struct SideloadScreen: View {
                             .buttonStyle(.plain)
                         }
                     }
-                    Button { showingTweakImporter = true } label: {
+                    Button { importKind = .dylib; showingImporter = true } label: {
                         Label("Ajouter un tweak (.dylib)", systemImage: "plus")
                     }
                     .buttonStyle(SecondaryButtonStyle())
@@ -727,6 +706,36 @@ struct SideloadScreen: View {
         } catch {
             failure = error.localizedDescription
         }
+    }
+
+    /// Copie l'IPA choisi en zone temporaire (l'accès sécurisé ne survit pas au
+    /// callback du picker) et le retient comme source « Autre IPA ».
+    private func importIPA(_ src: URL) throws {
+        let dest = try copyIntoTemp(src)
+        withAnimation(PX.Motion.settle) {
+            customIPA = dest
+            customName = src.lastPathComponent
+            customURLText = ""
+        }
+    }
+
+    /// Copie un tweak choisi en zone temporaire et l'ajoute à la liste.
+    private func importDylib(_ src: URL) throws {
+        let dest = try copyIntoTemp(src)
+        if !tweaks.contains(dest) {
+            withAnimation(PX.Motion.settle) { tweaks.append(dest) }
+        }
+    }
+
+    private func copyIntoTemp(_ src: URL) throws -> URL {
+        guard src.startAccessingSecurityScopedResource() else {
+            throw InstallError.badSource("accès au fichier refusé")
+        }
+        defer { src.stopAccessingSecurityScopedResource() }
+        let dest = URL.temporaryDirectory.appending(path: src.lastPathComponent)
+        try? FileManager.default.removeItem(at: dest)
+        try FileManager.default.copyItem(at: src, to: dest)
+        return dest
     }
 
     /// Résout l'IPA à installer, quelle que soit la cible :
