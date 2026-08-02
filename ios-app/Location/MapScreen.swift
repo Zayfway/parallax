@@ -44,9 +44,14 @@ struct MapScreen: View {
     @State private var fixCount = 0
     @State private var shown = false
     @State private var showingFavorites = false
+    @State private var showingSearch = false
+    /// Demande l'autorisation « à l'utilisation » pour afficher le point bleu
+    /// de la position réelle. Aucun délégué : MapKit gère l'affichage.
+    @State private var locationAuth = CLLocationManager()
 
     // ── Itinéraire ────────────────────────────────────────────────────────
     @State private var routeDestination: CLLocationCoordinate2D?
+    @State private var routeDestinationName: String?
     @State private var routeProfile: RouteProfile = .driving
     @State private var routeSpeed: Double = 1
     @State private var routePlan: RoutePlanner.Plan?
@@ -61,7 +66,14 @@ struct MapScreen: View {
             map
             overlays
         }
-        .onAppear { shown = true }
+        .onAppear {
+            shown = true
+            // Déclenche l'invite de localisation une fois, pour que le point réel
+            // s'affiche. Sans autorisation, MapKit n'affiche simplement rien.
+            if locationAuth.authorizationStatus == .notDetermined {
+                locationAuth.requestWhenInUseAuthorization()
+            }
+        }
         .safeAreaInset(edge: .top) { toolbar.appear(0, shown) }
         .fileImporter(
             isPresented: $showingImporter,
@@ -79,8 +91,39 @@ struct MapScreen: View {
                 showingFavorites = false
             }
         }
+        .sheet(isPresented: $showingSearch) {
+            SearchSheet(region: searchRegion, routing: routeMode) { name, coordinate in
+                selectSearchResult(name: name, coordinate: coordinate)
+            }
+        }
         // Le fix acquis se sent avant de se voir.
         .sensoryFeedback(.success, trigger: fixCount)
+    }
+
+    /// Biais de recherche autour de la position simulée si on en a une, pour que
+    /// « café » trouve d'abord celui d'à côté et non à l'autre bout du monde.
+    private var searchRegion: MKCoordinateRegion? {
+        guard let fix = engine.currentFix else { return nil }
+        return MKCoordinateRegion(center: fix,
+                                  span: MKCoordinateSpan(latitudeDelta: 0.4, longitudeDelta: 0.4))
+    }
+
+    /// Résultat de recherche choisi : en mode trajet il devient l'arrivée, sinon
+    /// il prépare une téléportation (mêmes gestes que sur la carte).
+    private func selectSearchResult(name: String, coordinate: CLLocationCoordinate2D) {
+        showingSearch = false
+        withAnimation(PX.Motion.settle) {
+            camera = .region(MKCoordinateRegion(
+                center: coordinate,
+                span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)))
+        }
+        if routeMode {
+            routeDestination = coordinate
+            routeDestinationName = name
+            recomputeRoute()
+        } else {
+            withAnimation(PX.Motion.tap) { pendingDrop = coordinate }
+        }
     }
 
     // MARK: - Carte
@@ -88,6 +131,11 @@ struct MapScreen: View {
     private var map: some View {
         MapReader { proxy in
             Map(position: $camera) {
+                // Le point bleu système : la position réelle de l'appareil, pour
+                // savoir d'où l'on part avant de mentir. Quand le spoof est actif,
+                // le marqueur ambre prend le dessus, juste au-dessus.
+                UserAnnotation()
+
                 if let fix = engine.currentFix {
                     Annotation("Position simulée", coordinate: fix) {
                         ZStack {
@@ -125,13 +173,19 @@ struct MapScreen: View {
                 }
             }
             .mapStyle(style.mapStyle)
+            .mapControls {
+                MapUserLocationButton()
+                MapCompass()
+            }
             .onTapGesture { point in
                 guard let coordinate = proxy.convert(point, from: .local) else { return }
                 // Deux intentions, deux comportements : en mode trajet on pose
                 // une arrivée, sinon on téléporte. Mélanger les deux sur le même
                 // geste rendrait chaque appui ambigu.
                 if routeMode {
-                    withAnimation(PX.Motion.tap) { routeDestination = coordinate }
+                    withAnimation(PX.Motion.tap) {
+                        routeDestination = coordinate; routeDestinationName = nil
+                    }
                     recomputeRoute()
                 } else {
                     withAnimation(PX.Motion.tap) { pendingDrop = coordinate }
@@ -199,7 +253,7 @@ struct MapScreen: View {
                 Button {
                     withAnimation(PX.Motion.tap) {
                         routeMode = false; routePlan = nil
-                        routeDestination = nil; routeError = nil
+                        routeDestination = nil; routeDestinationName = nil; routeError = nil
                     }
                 } label: {
                     Image(systemName: "xmark").font(.system(size: 11, weight: .bold))
@@ -207,6 +261,35 @@ struct MapScreen: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(PX.Color.inkFaint)
             }
+
+            // Arrivée : recherche d'adresse (barre de recherche) ou appui sur la
+            // carte. La recherche donne l'adresse exacte, la carte le geste rapide.
+            Button { showingSearch = true } label: {
+                HStack(spacing: PX.Space.tight) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(PX.Color.azimuth)
+                    Text(destinationLabel)
+                        .font(PX.Font.body(13))
+                        .foregroundStyle(hasDestination ? PX.Color.ink : PX.Color.inkFaint)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(PX.Color.inkFaint)
+                }
+                .padding(.vertical, 11)
+                .padding(.horizontal, PX.Space.base)
+                .background(
+                    RoundedRectangle(cornerRadius: PX.Radius.control, style: .continuous)
+                        .fill(PX.Color.night.opacity(0.55))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: PX.Radius.control, style: .continuous)
+                        .strokeBorder(PX.Color.horizon, lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
 
             SegmentedRow(selection: $routeProfile, options: RouteProfile.allCases) {
                 $0.rawValue
@@ -242,7 +325,7 @@ struct MapScreen: View {
                 .transition(.opacity)
             } else if !planning {
                 Text(routeDestination == nil
-                     ? "Appui long sur la carte pour poser l'arrivée."
+                     ? "Recherche une adresse ou touche la carte pour poser l'arrivée."
                      : "Calcul impossible pour l'instant.")
                     .font(PX.Font.body(12))
                     .foregroundStyle(PX.Color.inkFaint)
@@ -275,6 +358,13 @@ struct MapScreen: View {
         }
         .padding(PX.Space.base)
         .glassCard(emphasis: true)
+    }
+
+    private var hasDestination: Bool { routeDestination != nil }
+    private var destinationLabel: String {
+        if let name = routeDestinationName { return name }
+        if routeDestination != nil { return "Point posé sur la carte" }
+        return "Rechercher une adresse…"
     }
 
     /// Recalcule dès qu'un paramètre change. Le départ est la position simulée
@@ -414,13 +504,22 @@ struct MapScreen: View {
 
             Spacer()
 
+            Button { showingSearch = true } label: {
+                Image(systemName: "magnifyingglass").font(.system(size: 15))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(PX.Color.inkMuted)
+            .padding(.horizontal, 6)
+
             // Un trajet part de la position simulée : sans elle, rien à
             // calculer. Le bouton n'apparaît donc qu'une fois un point posé.
             if engine.currentFix != nil {
                 Button {
                     withAnimation(PX.Motion.settle) {
                         routeMode.toggle()
-                        if !routeMode { routePlan = nil; routeDestination = nil }
+                        if !routeMode {
+                            routePlan = nil; routeDestination = nil; routeDestinationName = nil
+                        }
                     }
                 } label: {
                     Image(systemName: routeMode ? "point.topleft.down.to.point.bottomright.curvepath.fill"
@@ -690,6 +789,161 @@ private struct FavoritesSheet: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, PX.Space.wide)
+    }
+}
+
+// MARK: - Recherche d'adresse
+
+/// Barre de recherche de lieu. On tape une adresse ou un nom, MapKit renvoie
+/// l'adresse exacte et les coordonnées, et on choisit un résultat — comme
+/// arrivée d'un trajet, ou comme point de téléportation, selon le contexte.
+private struct SearchSheet: View {
+    let region: MKCoordinateRegion?
+    /// En mode trajet, un résultat devient l'arrivée ; sinon, une téléportation.
+    let routing: Bool
+    let onSelect: (String, CLLocationCoordinate2D) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var query = ""
+    @State private var results: [MKMapItem] = []
+    @State private var searching = false
+    @State private var searchTask: Task<Void, Never>?
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        ZStack {
+            PX.Color.canvas
+            VStack(alignment: .leading, spacing: PX.Space.snug) {
+                header
+
+                TextField("", text: $query)
+                    .focused($focused)
+                    .field("Adresse ou lieu")
+                    .submitLabel(.search)
+                    .autocorrectionDisabled()
+                    .onChange(of: query) { _, new in schedule(new) }
+                    .onSubmit { run(query) }
+
+                if searching {
+                    HStack(spacing: PX.Space.tight) {
+                        ProgressView().tint(PX.Color.azimuth)
+                        Text("Recherche…")
+                            .font(PX.Font.body(12)).foregroundStyle(PX.Color.inkFaint)
+                    }
+                }
+
+                ScrollView {
+                    VStack(spacing: PX.Space.tight) {
+                        ForEach(results, id: \.self) { row($0) }
+                    }
+                }
+            }
+            .padding(PX.Space.base)
+        }
+        .presentationDetents([.large])
+        .presentationBackground(.clear)
+        .presentationCornerRadius(PX.Radius.sheet)
+        .onAppear { focused = true }
+    }
+
+    private var header: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(routing ? "Destination" : "Aller à")
+                    .font(PX.Font.display(24, .heavy))
+                    .foregroundStyle(PX.Color.ink)
+                Text(routing ? "L'arrivée de ton trajet."
+                             : "Cherche un lieu et téléporte-toi.")
+                    .font(PX.Font.body(12.5))
+                    .foregroundStyle(PX.Color.inkMuted)
+            }
+            Spacer()
+            Button { dismiss() } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(PX.Color.inkMuted)
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(.white.opacity(0.06)))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func row(_ item: MKMapItem) -> some View {
+        let coord = item.placemark.coordinate
+        return Button {
+            onSelect(item.name ?? "Lieu", coord)
+        } label: {
+            HStack(spacing: PX.Space.snug) {
+                Image(systemName: "mappin.circle.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(PX.Color.azimuth)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.name ?? "Lieu")
+                        .font(PX.Font.display(14, .semibold))
+                        .foregroundStyle(PX.Color.ink)
+                        .lineLimit(1)
+                    Text(Self.address(item))
+                        .font(PX.Font.body(12))
+                        .foregroundStyle(PX.Color.inkMuted)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(PX.Color.inkFaint)
+            }
+            .padding(PX.Space.snug)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .glassCard(radius: PX.Radius.control)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private static func address(_ item: MKMapItem) -> String {
+        let p = item.placemark
+        let parts = [p.thoroughfare, p.locality, p.administrativeArea, p.country]
+            .compactMap { $0 }
+        guard !parts.isEmpty else {
+            return String(format: "%+.5f, %+.5f", p.coordinate.latitude, p.coordinate.longitude)
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    // Débounce : on ne lance pas une requête réseau à chaque frappe.
+    private func schedule(_ q: String) {
+        searchTask?.cancel()
+        let trimmed = q.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2 else { results = []; searching = false; return }
+        searching = true
+        searchTask = Task {
+            try? await Task.sleep(for: .milliseconds(350))
+            if Task.isCancelled { return }
+            await perform(trimmed)
+        }
+    }
+
+    private func run(_ q: String) {
+        searchTask?.cancel()
+        let trimmed = q.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        searching = true
+        searchTask = Task { await perform(trimmed) }
+    }
+
+    private func perform(_ q: String) async {
+        let request = MKLocalSearch.Request()
+        request.naturalLanguageQuery = q
+        if let region { request.region = region }
+        do {
+            let response = try await MKLocalSearch(request: request).start()
+            if Task.isCancelled { return }
+            results = response.mapItems
+        } catch {
+            if Task.isCancelled { return }
+            results = []
+        }
+        searching = false
     }
 }
 
