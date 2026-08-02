@@ -17,6 +17,14 @@ import UniformTypeIdentifiers
 /// à conduire quelqu'un à travers une suite d'étapes. Ici il n'y a pas de
 /// suite — on regarde un territoire et on y pose un point.
 ///
+/// ── DEUX FAÇONS DE MENTIR ─────────────────────────────────────────────────
+///
+/// Se **téléporter** : un appui pose un point, la position y saute.
+/// **Parcourir** : on choisit un profil et une arrivée, et la position suit un
+/// trajet réel dans le temps. Voiture et marche empruntent les vraies routes
+/// via `MKDirections` ; l'avion suit une orthodromie. La vitesse n'accélère que
+/// le temps, jamais la trajectoire.
+///
 /// L'état est donc porté par `StatusBar`, qui remplit exactement le même rôle
 /// dans un vocabulaire adapté à la carte, et par le marqueur lui-même. C'est
 /// aussi le seul écran où **l'ambre a le droit d'exister** : quand la position
@@ -34,6 +42,17 @@ struct MapScreen: View {
     @State private var importError: String?
     @State private var fixCount = 0
     @State private var shown = false
+
+    // ── Itinéraire ────────────────────────────────────────────────────────
+    @State private var routeDestination: CLLocationCoordinate2D?
+    @State private var routeProfile: RouteProfile = .driving
+    @State private var routeSpeed: Double = 1
+    @State private var routePlan: RoutePlanner.Plan?
+    @State private var planning = false
+    @State private var routeError: String?
+    /// Quand il est actif, un appui long sur la carte pose l'arrivée au lieu
+    /// de téléporter. Deux gestes distincts pour deux intentions distinctes.
+    @State private var routeMode = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -69,6 +88,23 @@ struct MapScreen: View {
                         }
                     }
                 }
+                if let plan = routePlan {
+                    MapPolyline(coordinates: plan.polyline)
+                        .stroke(PX.Color.azimuth.opacity(0.85), style:
+                            StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
+                }
+                if let destination = routeDestination {
+                    Annotation("Arrivée", coordinate: destination) {
+                        ZStack {
+                            Circle()
+                                .fill(PX.Color.azimuth.opacity(0.22))
+                                .frame(width: 30, height: 30)
+                            Image(systemName: routeProfile.icon)
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(PX.Color.azimuth)
+                        }
+                    }
+                }
                 if let pending = pendingDrop {
                     Annotation("Nouveau point", coordinate: pending) {
                         Image(systemName: "mappin.circle.fill")
@@ -81,7 +117,14 @@ struct MapScreen: View {
             }
             .mapStyle(style.mapStyle)
             .onTapGesture { point in
-                if let coordinate = proxy.convert(point, from: .local) {
+                guard let coordinate = proxy.convert(point, from: .local) else { return }
+                // Deux intentions, deux comportements : en mode trajet on pose
+                // une arrivée, sinon on téléporte. Mélanger les deux sur le même
+                // geste rendrait chaque appui ambigu.
+                if routeMode {
+                    withAnimation(PX.Motion.tap) { routeDestination = coordinate }
+                    recomputeRoute()
+                } else {
                     withAnimation(PX.Motion.tap) { pendingDrop = coordinate }
                 }
             }
@@ -95,6 +138,11 @@ struct MapScreen: View {
         VStack(spacing: PX.Space.snug) {
             if let track = engine.playingTrack {
                 trackCard(track)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
+            if routeMode {
+                routePanel
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
@@ -124,6 +172,125 @@ struct MapScreen: View {
         .padding(PX.Space.base)
         .animation(PX.Motion.settle, value: engine.state)
         .animation(PX.Motion.settle, value: pendingDrop != nil)
+        .animation(PX.Motion.settle, value: routeMode)
+        .animation(PX.Motion.settle, value: routePlan?.distance)
+    }
+
+    // MARK: - Itinéraire
+
+    /// Un trajet n'est pas une téléportation : on choisit un profil, une
+    /// arrivée, une vitesse, et la position **parcourt** la trace. Le tracé
+    /// s'affiche avant qu'on ne lance quoi que ce soit, parce que la première
+    /// question est toujours « il passe par où ? ».
+    private var routePanel: some View {
+        VStack(alignment: .leading, spacing: PX.Space.snug) {
+            HStack {
+                SectionLabel("Trajet")
+                Spacer()
+                Button {
+                    withAnimation(PX.Motion.tap) {
+                        routeMode = false; routePlan = nil
+                        routeDestination = nil; routeError = nil
+                    }
+                } label: {
+                    Image(systemName: "xmark").font(.system(size: 11, weight: .bold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(PX.Color.inkFaint)
+            }
+
+            SegmentedRow(selection: $routeProfile, options: RouteProfile.allCases) {
+                $0.rawValue
+            }
+            .onChange(of: routeProfile) { _, _ in recomputeRoute() }
+
+            // Vitesse : n'accélère que le temps, jamais la trajectoire.
+            VStack(alignment: .leading, spacing: 3) {
+                HStack {
+                    Text("Vitesse")
+                        .font(PX.Font.mono(10, .semibold))
+                        .tracking(0.9)
+                        .foregroundStyle(PX.Color.inkFaint)
+                    Spacer()
+                    Text(routeSpeed == 1 ? "réelle" : String(format: "× %.0f", routeSpeed))
+                        .font(PX.Font.mono(11, .semibold))
+                        .foregroundStyle(PX.Color.azimuth)
+                        .contentTransition(.numericText())
+                }
+                Slider(value: $routeSpeed, in: 1...60, step: 1)
+                    .tint(PX.Color.azimuth)
+                    .onChange(of: routeSpeed) { _, _ in recomputeRoute() }
+            }
+
+            if let plan = routePlan {
+                HStack(spacing: PX.Space.snug) {
+                    Label(plan.distanceLabel, systemImage: "ruler")
+                    Label(plan.durationLabel, systemImage: "clock")
+                    Spacer()
+                }
+                .font(PX.Font.mono(11))
+                .foregroundStyle(PX.Color.inkMuted)
+                .transition(.opacity)
+            } else if !planning {
+                Text(routeDestination == nil
+                     ? "Appui long sur la carte pour poser l'arrivée."
+                     : "Calcul impossible pour l'instant.")
+                    .font(PX.Font.body(12))
+                    .foregroundStyle(PX.Color.inkFaint)
+            }
+
+            if let routeError {
+                Text(routeError)
+                    .font(PX.Font.body(12))
+                    .foregroundStyle(PX.Color.alert)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Button {
+                guard let plan = routePlan else { return }
+                engine.play(track: plan.track)
+                withAnimation(PX.Motion.acquire) { routeMode = false }
+                fixCount += 1
+            } label: {
+                HStack(spacing: PX.Space.tight) {
+                    if planning {
+                        ProgressView().tint(.white)
+                    } else {
+                        Image(systemName: routeProfile.icon)
+                    }
+                    Text(planning ? "Calcul du trajet…" : "Lancer le trajet")
+                }
+            }
+            .buttonStyle(ProminentButtonStyle(enabled: routePlan != nil && !planning))
+            .disabled(routePlan == nil || planning)
+        }
+        .padding(PX.Space.base)
+        .glassCard(emphasis: true)
+    }
+
+    /// Recalcule dès qu'un paramètre change. Le départ est la position simulée
+    /// courante — c'est là qu'on est, du point de vue de l'appareil.
+    private func recomputeRoute() {
+        guard let destination = routeDestination,
+              let start = engine.currentFix else { return }
+
+        planning = true
+        routeError = nil
+        Task {
+            do {
+                let plan = try await RoutePlanner.plan(
+                    from: start, to: destination,
+                    profile: routeProfile, speedFactor: routeSpeed
+                )
+                withAnimation(PX.Motion.settle) { routePlan = plan }
+            } catch {
+                withAnimation(PX.Motion.settle) {
+                    routePlan = nil
+                    routeError = error.localizedDescription
+                }
+            }
+            planning = false
+        }
     }
 
     private func trackCard(_ track: GPXTrack) -> some View {
@@ -172,6 +339,24 @@ struct MapScreen: View {
             }
 
             Spacer()
+
+            // Un trajet part de la position simulée : sans elle, rien à
+            // calculer. Le bouton n'apparaît donc qu'une fois un point posé.
+            if engine.currentFix != nil {
+                Button {
+                    withAnimation(PX.Motion.settle) {
+                        routeMode.toggle()
+                        if !routeMode { routePlan = nil; routeDestination = nil }
+                    }
+                } label: {
+                    Image(systemName: routeMode ? "point.topleft.down.to.point.bottomright.curvepath.fill"
+                                                : "point.topleft.down.to.point.bottomright.curvepath")
+                        .font(.system(size: 15))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(routeMode ? PX.Color.azimuth : PX.Color.inkMuted)
+                .padding(.horizontal, 6)
+            }
 
             Button { showingImporter = true } label: {
                 Image(systemName: "arrow.down.doc").font(.system(size: 15))

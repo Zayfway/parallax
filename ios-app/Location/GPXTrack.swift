@@ -191,7 +191,8 @@ private final class GPXParser: NSObject, XMLParserDelegate {
     }
 }
 
-private extension CLLocation {
+/// Partagé avec `RoutePlanner` : les deux calculent des longueurs de trace.
+extension CLLocation {
     convenience init(_ c: CLLocationCoordinate2D) {
         self.init(latitude: c.latitude, longitude: c.longitude)
     }
