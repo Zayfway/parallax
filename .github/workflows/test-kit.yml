@@ -1,0 +1,73 @@
+name: Kit de test (tweak)
+
+# Compile un petit kit pour valider l'injection de tweaks (palier 1) :
+#   · PXHost.ipa   — app hôte minimale, non signée (Parallax la signe)
+#   · PXHello.dylib — tweak autonome (UIKit only) qui affiche « Tweak injecté ✅ »
+# Publié dans une release dédiée `test-kit`. Ne touche pas la release produit.
+
+on:
+  push:
+    branches: [main]
+    paths: ['tools/test-kit/**', '.github/workflows/test-kit.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sélectionner Xcode
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          xcodebuild -version
+
+      - name: Compiler le tweak et l'app hôte
+        run: |
+          set -eo pipefail
+          cd tools/test-kit
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+
+          # Tweak autonome : install_name en @executable_path pour être chargé
+          # depuis Frameworks/ après injection.
+          xcrun -sdk iphoneos clang -arch arm64 -dynamiclib -fobjc-arc \
+            -isysroot "$SDK" -miphoneos-version-min=14.0 \
+            -framework Foundation -framework UIKit \
+            -Wl,-install_name,@executable_path/Frameworks/PXHello.dylib \
+            tweak/PXHello.m -o PXHello.dylib
+
+          # App hôte minimale.
+          xcrun -sdk iphoneos clang -arch arm64 -fobjc-arc \
+            -isysroot "$SDK" -miphoneos-version-min=14.0 \
+            -framework Foundation -framework UIKit \
+            host/main.m -o PXHost
+
+          mkdir -p Payload/PXHost.app
+          cp PXHost            Payload/PXHost.app/PXHost
+          cp host/Info.plist   Payload/PXHost.app/Info.plist
+          chmod +x Payload/PXHost.app/PXHost
+          zip -qry PXHost.ipa Payload
+
+          echo "— artefacts —"; ls -la PXHello.dylib PXHost.ipa
+
+      - name: Publier le kit de test
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: test-kit
+          name: Kit de test — injection de tweaks
+          prerelease: true
+          make_latest: false
+          files: |
+            tools/test-kit/PXHello.dylib
+            tools/test-kit/PXHost.ipa
+          body: |
+            Kit pour valider l'injection de tweaks (palier 1) dans Parallax.
+
+            - **PXHost.ipa** — app hôte minimale, **non signée** (Parallax la signe avec ton compte).
+            - **PXHello.dylib** — tweak autonome (UIKit only, sans Substrate) qui affiche « Tweak injecté ✅ » au lancement.
+
+            Test : Parallax → **Installer** → **Autre IPA** → PXHost.ipa → **Ajouter un tweak** → PXHello.dylib → **Installer**. Ouvre « PX Test » : si l'alerte s'affiche, l'injection marche.
