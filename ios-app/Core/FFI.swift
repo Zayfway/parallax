@@ -77,6 +77,76 @@ extension FFI {
     }
 }
 
+// MARK: - Installation
+
+extension FFI {
+
+    /// Identité de l'appareil, écrite par Rust au moment du jumelage.
+    ///
+    /// L'UDID ne vient de nulle part ailleurs : le `RpPairingFile` ne le
+    /// contient pas, et le lire ensuite demanderait lockdown par-dessus le
+    /// tunnel. `PairableHost::accept` le rend gratuitement, une seule fois.
+    struct PairedDevice: Decodable, Equatable {
+        let udid: String
+        let name: String
+        let model: String
+    }
+
+    static func pairedDevice(besidePairingFile url: URL) -> PairedDevice? {
+        let peer = URL(fileURLWithPath: url.path + ".peer.json")
+        guard let data = try? Data(contentsOf: peer) else { return nil }
+        return try? JSONDecoder().decode(PairedDevice.self, from: data)
+    }
+
+    /// Installe un `.ipa` : enregistrement de l'appareil, signature, transfert,
+    /// installation. Rend le nom de l'app spéciale détectée, ou une chaîne vide.
+    ///
+    /// **Bloquant, et longuement** — plusieurs allers-retours chez Apple puis un
+    /// transfert de fichier. `DispatchQueue.global` obligatoire.
+    @discardableResult
+    static func installIPA(
+        session: OpaquePointer,
+        tunnel: OpaquePointer,
+        ipaPath: String,
+        device: PairedDevice
+    ) throws -> String {
+        let raw = ipaPath.withCString { ipa in
+            device.udid.withCString { udid in
+                device.name.withCString { name in
+                    px_install_ipa(session, tunnel, ipa, udid, name, pxInstallProgress)
+                }
+            }
+        }
+        guard let raw else { throw Failure(code: PX_ERR_INTERNAL, detail: lastError) }
+        defer { px_string_free(raw) }
+        return String(cString: raw)
+    }
+}
+
+/// Pont de progression Rust → Swift.
+///
+/// **Portée fichier, donc non isolée.** Une closure définie dans un contexte
+/// `@MainActor` en hériterait l'isolation, et le runtime trappe dès que Rust
+/// l'appelle depuis un de ses threads. C'est le même piège que `pxPinSink`.
+func pxInstallProgress(_ percent: UInt32, _ label: UnsafePointer<CChar>?) {
+    let text = label.map { String(cString: $0) } ?? ""
+    DispatchQueue.main.async {
+        NotificationCenter.default.post(
+            name: .installProgress,
+            object: InstallProgress(percent: Int(percent), label: text)
+        )
+    }
+}
+
+struct InstallProgress: Equatable {
+    let percent: Int
+    let label: String
+}
+
+extension Notification.Name {
+    static let installProgress = Notification.Name("io.parallax.installProgress")
+}
+
 // MARK: - Certificats
 
 extension FFI {

@@ -14,16 +14,38 @@ struct SideloadScreen: View {
 
     @EnvironmentObject private var connection: DeviceConnection
     @EnvironmentObject private var location: LocationEngine
+    @EnvironmentObject private var account: AppleAccountModel
 
     @State private var email = ""
     @State private var password = ""
     @State private var target: InstallTarget = .sideStore
     @State private var channel: Channel = .stable
     @State private var installing = false
+    @State private var progress: InstallProgress?
+    @State private var failure: String?
+    @State private var installed: String?
+    /// Permet de corriger une adresse devenue fausse sans reconstruire l'app.
+    @AppStorage("ipaSourceOverride") private var sourceOverride: String = ""
 
     enum InstallTarget: String, CaseIterable {
         case sideStore = "SideStore"
         case withLiveContainer = "+ LiveContainer"
+
+        /// Les variantes correspondent aux `SpecialApp` qu'isideload sait
+        /// reconnaître : `SideStore` et `SideStoreLc`. C'est Rust qui confirmera
+        /// laquelle il a réellement détectée dans l'IPA signé.
+        func url(for channel: Channel) -> String {
+            switch (self, channel) {
+            case (.sideStore, .stable):
+                "https://github.com/SideStore/SideStore/releases/latest/download/SideStore.ipa"
+            case (.sideStore, .nightly):
+                "https://github.com/SideStore/SideStore/releases/download/nightly/SideStore.ipa"
+            case (.withLiveContainer, .stable):
+                "https://github.com/SideStore/SideStore/releases/latest/download/SideStore-LiveContainer.ipa"
+            case (.withLiveContainer, .nightly):
+                "https://github.com/SideStore/SideStore/releases/download/nightly/SideStore-LiveContainer.ipa"
+            }
+        }
     }
     enum Channel: String, CaseIterable { case stable = "Stable", nightly = "Nightly" }
 
@@ -45,6 +67,18 @@ struct SideloadScreen: View {
                     accountCard
                     targetCard
 
+                    if installing || progress != nil {
+                        progressCard
+                    }
+
+                    if let installed {
+                        resultCard(installed)
+                    }
+
+                    if let failure {
+                        failureCard(failure)
+                    }
+
                     if !connection.tunnelState.isConnected {
                         tunnelCard
                     }
@@ -52,6 +86,10 @@ struct SideloadScreen: View {
                 .padding(.horizontal, PX.Space.base)
                 .padding(.bottom, PX.Space.wide)
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .installProgress)) { note in
+            guard let update = note.object as? InstallProgress else { return }
+            withAnimation(PX.Motion.settle) { progress = update }
         }
         .safeAreaInset(edge: .bottom) {
             Button {
@@ -118,6 +156,76 @@ struct SideloadScreen: View {
         .glassCard()
     }
 
+    /// Une seule barre, pervenche : opération en cours. Jamais d'ambre, qui ne
+    /// signifie que « position simulée active ».
+    private var progressCard: some View {
+        VStack(alignment: .leading, spacing: PX.Space.tight) {
+            HStack {
+                SectionLabel("Installation")
+                Spacer()
+                Text("\(progress?.percent ?? 0) %")
+                    .font(PX.Font.mono(11, .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(PX.Color.azimuth)
+                    .contentTransition(.numericText())
+            }
+
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(PX.Color.night.opacity(0.55))
+                    Capsule()
+                        .fill(PX.Color.azimuth)
+                        .frame(width: geometry.size.width * CGFloat(progress?.percent ?? 0) / 100)
+                }
+            }
+            .frame(height: 4)
+
+            Text(progress?.label ?? "Préparation")
+                .font(PX.Font.body(12))
+                .foregroundStyle(PX.Color.inkMuted)
+        }
+        .padding(PX.Space.base)
+        .glassCard()
+        .animation(PX.Motion.settle, value: progress)
+    }
+
+    private func resultCard(_ name: String) -> some View {
+        HStack(spacing: PX.Space.snug) {
+            Image(systemName: "checkmark.seal.fill")
+                .font(.system(size: 24))
+                .foregroundStyle(PX.Color.verdant)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(name) installé")
+                    .font(PX.Font.display(14.5, .semibold))
+                    .foregroundStyle(PX.Color.ink)
+                Text("Cherche-le sur ton écran d'accueil.")
+                    .font(PX.Font.body(12))
+                    .foregroundStyle(PX.Color.inkMuted)
+            }
+            Spacer()
+        }
+        .padding(PX.Space.base)
+        .glassCard()
+    }
+
+    private func failureCard(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: PX.Space.snug) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(PX.Color.alert)
+            Text(message)
+                .font(PX.Font.body(12.5))
+                .foregroundStyle(PX.Color.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(PX.Space.base)
+        .glassCard()
+        .overlay(
+            RoundedRectangle(cornerRadius: PX.Radius.card, style: .continuous)
+                .strokeBorder(PX.Color.alert.opacity(0.28), lineWidth: 1)
+        )
+    }
+
     private var targetCard: some View {
         VStack(alignment: .leading, spacing: PX.Space.snug) {
             SectionLabel("Application")
@@ -165,15 +273,105 @@ struct SideloadScreen: View {
         )
     }
 
+    /// Les trois conditions réelles, dans l'ordre où l'utilisateur les remplit :
+    /// compte connecté, lien établi, identité de l'appareil connue. Les champs
+    /// de mot de passe locaux ne conditionnent plus rien — la session vient du
+    /// modèle partagé.
     private var canInstall: Bool {
-        !email.isEmpty && !password.isEmpty
-            && connection.tunnelState.isConnected && !installing
+        account.isConnected && connection.tunnelPointer != nil && !installing
     }
 
+    /// Enchaîne le tout : le lien doit être vivant, le compte connecté, et
+    /// l'identité de l'appareil connue — sans UDID, Apple refuse le profil de
+    /// provisionnement avec l'erreur 8220.
     private func install() async {
+        guard !installing else { return }
+
+        guard let device = FFI.pairedDevice(besidePairingFile: PairingStore.fileURL) else {
+            failure = "Identité de l'appareil inconnue. Refais le jumelage : l'UDID y est relevé une seule fois."
+            return
+        }
+
         installing = true
+        progress = InstallProgress(percent: 0, label: "Préparation")
+        failure = nil
         defer { installing = false }
-        // → Engine.runOneClick() : jumelage → connexion → login → signature → install
+
+        do {
+            // Le lien d'abord : sans lui, ni transfert ni installation.
+            try await connection.connect()
+            guard let tunnel = connection.tunnelPointer else {
+                failure = "Lien indisponible. Passe par l'onglet Jumelage."
+                return
+            }
+            guard let session = account.sessionPointer else {
+                failure = "Connecte-toi à ton compte Apple avant d'installer."
+                return
+            }
+
+            let ipa = try await download(target: target, channel: channel)
+            let special = try await onBackground {
+                try FFI.installIPA(
+                    session: session, tunnel: tunnel,
+                    ipaPath: ipa.path, device: device
+                )
+            }
+            installed = special.isEmpty ? target.rawValue : special
+            LogBridge.shared.note("installation terminée : \(installed ?? "")")
+        } catch {
+            failure = error.localizedDescription
+        }
+    }
+
+    /// Récupère l'IPA à installer.
+    ///
+    /// ⚠️ Ces adresses sont les URL publiques usuelles des projets concernés ;
+    /// je ne les ai pas vérifiées contre un téléchargement réel. Si l'une
+    /// change, elle est surchargeable dans les Réglages plutôt que de figer une
+    /// valeur fausse dans le binaire.
+    private func download(target: InstallTarget, channel: Channel) async throws -> URL {
+        let source = sourceOverride.isEmpty ? target.url(for: channel) : sourceOverride
+        guard let url = URL(string: source) else {
+            throw InstallError.badSource(source)
+        }
+
+        progress = InstallProgress(percent: 0, label: "Téléchargement de \(target.rawValue)")
+        let (temporary, response) = try await URLSession.shared.download(from: url)
+
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw InstallError.download(http.statusCode, source)
+        }
+
+        // URLSession supprime son fichier temporaire à la sortie du scope ;
+        // on le déplace sous un nom stable avant de le confier à Rust.
+        let destination = URL.temporaryDirectory
+            .appending(path: "\(target.rawValue)-\(channel.rawValue).ipa")
+        try? FileManager.default.removeItem(at: destination)
+        try FileManager.default.moveItem(at: temporary, to: destination)
+        return destination
+    }
+
+    enum InstallError: LocalizedError {
+        case badSource(String)
+        case download(Int, String)
+
+        var errorDescription: String? {
+            switch self {
+            case .badSource(let s): "Adresse de téléchargement invalide : \(s)"
+            case .download(let code, let s): "Téléchargement refusé (\(code)) : \(s)"
+            }
+        }
+    }
+
+    /// Sort l'appel bloquant du pool coopératif — l'installation dure des
+    /// dizaines de secondes.
+    private func onBackground<T>(_ work: @escaping () throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<T, Error>) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do { continuation.resume(returning: try work()) }
+                catch { continuation.resume(throwing: error) }
+            }
+        }
     }
 }
 

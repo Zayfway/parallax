@@ -45,6 +45,10 @@ final class DeviceConnection: ObservableObject {
     /// et du runtime qui les pilote — d'où un seul pointeur à libérer.
     private var tunnelHandle: OpaquePointer?
 
+    /// Poignée du tunnel, **empruntée**. Valide tant que `releaseTunnel` n'a
+    /// pas été appelé ; ne jamais la libérer depuis l'appelant.
+    var tunnelPointer: OpaquePointer? { tunnelHandle }
+
     /// Adaptateur et poignée RSD, **empruntés** au tunnel. Ils cessent d'être
     /// valides dès que `tunnelHandle` est libéré : jamais de `free` dessus.
     private(set) var adapterHandle: UnsafeMutableRawPointer?
