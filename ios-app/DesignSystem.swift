@@ -356,8 +356,20 @@ struct InstrumentStrip: View {
             Text(sessionLabel.uppercased())
                 .font(PX.Font.mono(10, .semibold))
                 .tracking(0.8)
-                .foregroundStyle(PX.Color.inkFaint)
+                .foregroundStyle(statusTint)
                 .contentTransition(.opacity)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(
+                    Capsule()
+                        .fill(statusTint.opacity(0.12))
+                        .overlay(Capsule().strokeBorder(statusTint.opacity(0.26), lineWidth: 0.8))
+                )
+                // La pastille respire quand quelque chose est vivant, et reste
+                // inerte sinon. C'est le seul mouvement de la bande, donc il
+                // se remarque sans avoir à être lu.
+                .shadow(color: statusTint.opacity(statusGlows && breathing ? 0.45 : 0),
+                        radius: 8)
         }
         .padding(.horizontal, PX.Space.base)
         .padding(.vertical, 11)
@@ -365,6 +377,26 @@ struct InstrumentStrip: View {
         .animation(PX.Motion.settle, value: live)
         .animation(PX.Motion.settle, value: sessionLabel)
         .onAppear { withAnimation(PX.Motion.breathe) { breathing = true } }
+    }
+
+    /// Teinte de la pastille d'état, déduite du libellé. Vert quand quelque
+    /// chose tient, rouge quand ça manque, pervenche pendant, neutre au repos.
+    /// Jamais d'ambre : elle est réservée au point et aux coordonnées.
+    private var statusTint: Color {
+        let text = sessionLabel.uppercased()
+        if text.contains("OK") || text.contains("ÉTABLI") || text.contains("EMPLACEMENT") {
+            return PX.Color.verdant
+        }
+        if text.contains("OFF") || text.contains("SUBNET") || text.contains("ERREUR")
+            || text.contains("HORS LIGNE") {
+            return PX.Color.alert
+        }
+        if text.contains("…") || text.contains("LECTURE") { return PX.Color.azimuth }
+        return PX.Color.inkFaint
+    }
+
+    private var statusGlows: Bool {
+        statusTint == PX.Color.verdant || statusTint == PX.Color.azimuth
     }
 
     private var coordinateText: String {

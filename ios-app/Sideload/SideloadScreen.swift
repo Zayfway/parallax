@@ -34,6 +34,7 @@ struct SideloadScreen: View {
     @EnvironmentObject private var connection: DeviceConnection
     @EnvironmentObject private var location: LocationEngine
     @EnvironmentObject private var account: AppleAccountModel
+    @StateObject private var log = LogBridge.shared
 
     @State private var target: InstallTarget = .sideStore
     @State private var channel: Channel = .stable
@@ -44,6 +45,10 @@ struct SideloadScreen: View {
     @State private var installed: String?
     /// Incrémenté à chaque aboutissement, pour rejouer le sceau.
     @State private var doneCount = 0
+    /// Respiration de la lueur sur l'étape en cours.
+    @State private var pulse = false
+    /// Dernières lignes du cœur natif, pour que l'attente soit lisible.
+    @State private var trace: [String] = []
     /// Permet de corriger une adresse devenue fausse sans reconstruire l'app.
     @AppStorage("ipaSourceOverride") private var sourceOverride: String = ""
 
@@ -83,12 +88,15 @@ struct SideloadScreen: View {
         case done(String)
         case failed(String)
 
+        /// Numéro de l'étape **en cours**. Une étape est cochée quand
+        /// `phase.step` la dépasse, d'où le 4 pour `.done` : sans lui la
+        /// troisième restait éternellement active, jamais validée.
         var step: Int {
             switch self {
-            case .needsAccount:              0
-            case .needsPairing, .needsLink:  1
-            case .ready:                     2
-            case .working, .done:            3
+            case .needsAccount:              1
+            case .needsPairing, .needsLink:  2
+            case .ready, .working:           3
+            case .done:                      4
             case .failed:                    0
             }
         }
@@ -199,13 +207,20 @@ struct SideloadScreen: View {
                 .padding(.bottom, PX.Space.wide)
             }
         }
-        .onAppear { shown = true }
+        .onAppear {
+            shown = true
+            withAnimation(PX.Motion.breathe) { pulse = true }
+        }
         .animation(PX.Motion.settle, value: installing)
         .animation(PX.Motion.acquire, value: installed)
         .animation(PX.Motion.settle, value: failure)
         .onReceive(NotificationCenter.default.publisher(for: .installProgress)) { note in
             guard let update = note.object as? InstallProgress else { return }
             withAnimation(PX.Motion.settle) { progress = update }
+        }
+        .onReceive(log.$lines) { lines in
+            guard installing, let last = lines.last else { return }
+            absorb(last)
         }
         .safeAreaInset(edge: .bottom) {
             Button {
@@ -308,6 +323,15 @@ struct SideloadScreen: View {
 
         return HStack(alignment: .top, spacing: PX.Space.snug) {
             ZStack {
+                // La lueur ne vit que sur l'étape en cours. C'est ce qui fait
+                // qu'on la trouve sans la chercher, et pourquoi il ne doit y en
+                // avoir qu'une : deux lueurs, et plus aucune ne désigne rien.
+                Circle()
+                    .fill(PX.Color.azimuth)
+                    .frame(width: 28, height: 28)
+                    .blur(radius: 11)
+                    .opacity(active ? (pulse ? 0.55 : 0.22) : 0)
+
                 Circle()
                     .fill(done ? PX.Color.verdant.opacity(0.18)
                                : active ? PX.Color.azimuth.opacity(0.20)
@@ -318,10 +342,12 @@ struct SideloadScreen: View {
                     Image(systemName: "checkmark")
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(PX.Color.verdant)
+                        .transition(.scale(scale: 0.4).combined(with: .opacity))
                 } else {
                     Text("\(number)")
                         .font(PX.Font.mono(12, .bold))
                         .foregroundStyle(active ? PX.Color.azimuth : PX.Color.inkFaint)
+                        .transition(.opacity)
                 }
             }
             .overlay(
@@ -343,7 +369,7 @@ struct SideloadScreen: View {
             }
             Spacer(minLength: 0)
         }
-        .animation(PX.Motion.settle, value: phase.step)
+        .animation(PX.Motion.acquire, value: phase.step)
     }
 
     private func connector(filled: Bool) -> some View {
@@ -381,10 +407,75 @@ struct SideloadScreen: View {
             Text(progress?.label ?? "Préparation")
                 .font(PX.Font.body(12))
                 .foregroundStyle(PX.Color.inkMuted)
+
+            if !trace.isEmpty {
+                Divider().overlay(PX.Color.horizon)
+                traceWindow
+            }
         }
         .padding(PX.Space.base)
         .glassCard()
         .animation(PX.Motion.settle, value: progress)
+    }
+
+    /// Fenêtre de journal, six lignes glissantes.
+    ///
+    /// Une barre qui avance sans rien dire, c'est une attente ; une barre qui
+    /// nomme ce qu'elle fait, c'est un travail. On ne montre donc pas *tout* le
+    /// journal — la signature à elle seule crache des centaines de lignes — mais
+    /// ce qui a du sens vu d'ici : requêtes Apple, frameworks signés, transfert.
+    ///
+    /// En mono, parce que ce sont les mots de la machine, pas les nôtres.
+    private var traceWindow: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(Array(trace.enumerated()), id: \.offset) { index, line in
+                HStack(alignment: .top, spacing: 6) {
+                    Circle()
+                        .fill(index == trace.count - 1 ? PX.Color.azimuth : PX.Color.inkFaint)
+                        .frame(width: 3, height: 3)
+                        .padding(.top, 5)
+                    Text(line)
+                        .font(PX.Font.mono(9.5))
+                        .foregroundStyle(index == trace.count - 1
+                                         ? PX.Color.inkMuted : PX.Color.inkFaint)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                // La ligne la plus ancienne s'efface au lieu de disparaître.
+                .opacity(index == 0 && trace.count == Self.traceDepth ? 0.45 : 1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .animation(PX.Motion.settle, value: trace)
+    }
+
+    private static let traceDepth = 6
+
+    /// Ne retient que ce qui informe. Le reste — des centaines de lignes de
+    /// scellement de ressources — noierait le peu qui compte.
+    private func absorb(_ line: String) {
+        let interesting = [
+            "Registered app IDs", "provisioning", "Acquired", "certificate",
+            "Signing ", "App signed", "IPA reconstitué", "Device is a development",
+            "Transfert", "Installation", "install", "Enregistrement", "Signature",
+            "Préparation", "Téléchargement",
+        ]
+        guard interesting.contains(where: { line.localizedCaseInsensitiveContains($0) })
+        else { return }
+
+        // On coupe l'horodatage et le module : à cette taille, seule l'action
+        // tient sur la ligne.
+        var text = line
+        if let range = text.range(of: "  ") { text = String(text[range.upperBound...]) }
+        text = text.replacingOccurrences(of: "INFO ", with: "")
+        if let colon = text.range(of: ": "), text.distance(from: text.startIndex, to: colon.lowerBound) < 42 {
+            text = String(text[colon.upperBound...])
+        }
+
+        withAnimation(PX.Motion.settle) {
+            trace.append(String(text.prefix(90)))
+            if trace.count > Self.traceDepth { trace.removeFirst(trace.count - Self.traceDepth) }
+        }
     }
 
     private func failureCard(_ message: String) -> some View {
@@ -446,6 +537,7 @@ struct SideloadScreen: View {
         }
 
         installing = true
+        trace = []
         progress = InstallProgress(percent: 0, label: "Préparation")
         failure = nil
         defer { installing = false }
