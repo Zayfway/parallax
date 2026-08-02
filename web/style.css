@@ -1,0 +1,315 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   PARALLAX — site
+
+   Les jetons sont ceux de `ios-app/DesignSystem.swift`, à l'identique. Un site
+   qui ressemble vaguement à l'app est pire qu'un site qui ne lui ressemble
+   pas : l'écart se remarque et donne l'impression que rien n'est fini.
+
+   Deux règles héritées, et elles tiennent ici aussi :
+   · l'ambre (--signal) signifie « position simulée », jamais « bouton joli »
+   · mono = valeur machine, rounded = adressé à l'humain
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --night: #0a0d18;
+  --abyss: #131829;
+  --strata: #1c2338;
+  --horizon: #2a3352;
+
+  --azimuth: #7c8cff;
+  --signal: #f5a65b;
+  --verdant: #4ade9b;
+  --alert: #ff6b6b;
+
+  --ink: #f2f4ff;
+  --ink-muted: #9aa3c4;
+  --ink-faint: #5a6488;
+
+  --r-card: 20px;
+  --r-control: 14px;
+  --r-chip: 10px;
+
+  --rounded: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--night);
+  color: var(--ink);
+  font-family: var(--rounded);
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+
+/* Le même dégradé radial haut que `PX.Color.canvas` : il donne au verre
+   quelque chose à réfracter, sans quoi tout le système s'aplatit. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 900px 620px at 50% -10%,
+    rgba(29, 36, 71, 0.9),
+    transparent 70%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+main { position: relative; z-index: 1; }
+
+.wrap {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+/* ── Verre ─────────────────────────────────────────────────────────────── */
+/* Les quatre couches de `GlassCard`. La troisième — l'arête éclairée — est
+   celle qu'on oublie, et c'est elle qui sépare « verre » de « rectangle flou ». */
+.glass {
+  background: linear-gradient(rgba(19, 24, 41, 0.62), rgba(19, 24, 41, 0.52));
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  border: 1px solid transparent;
+  border-radius: var(--r-card);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 18px 40px rgba(0, 0, 0, 0.42);
+  padding: 26px;
+}
+
+/* ── Barre ─────────────────────────────────────────────────────────────── */
+header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  background: rgba(10, 13, 24, 0.72);
+  border-bottom: 1px solid rgba(42, 51, 82, 0.6);
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 24px;
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+.bar img { width: 30px; height: 30px; border-radius: 8px; }
+.bar strong { font-size: 16px; letter-spacing: 0.4px; }
+.bar nav { margin-left: auto; display: flex; gap: 20px; }
+
+.bar nav a {
+  color: var(--ink-muted);
+  text-decoration: none;
+  font-size: 14px;
+  transition: color 0.2s;
+}
+.bar nav a:hover { color: var(--ink); }
+
+/* ── Héros ─────────────────────────────────────────────────────────────── */
+.hero { padding: 84px 0 60px; text-align: center; }
+
+.hero img.mark {
+  width: 108px;
+  height: 108px;
+  border-radius: 26px;
+  box-shadow: 0 22px 50px rgba(124, 140, 255, 0.26);
+  animation: settle 0.75s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.hero h1 {
+  font-size: clamp(38px, 7vw, 60px);
+  line-height: 1.06;
+  margin: 26px 0 14px;
+  letter-spacing: -1.4px;
+  font-weight: 800;
+}
+
+.hero p.lede {
+  color: var(--ink-muted);
+  font-size: 18px;
+  max-width: 570px;
+  margin: 0 auto 30px;
+}
+
+/* Le nom du projet reprend son propre thème : le mot « parallaxe » se lit
+   deux fois, décalé, comme le symbole de l'icône. */
+.shift { position: relative; display: inline-block; color: var(--azimuth); }
+.shift::after {
+  content: attr(data-echo);
+  position: absolute;
+  inset: 0;
+  color: var(--signal);
+  opacity: 0.5;
+  transform: translateX(6px);
+  animation: parallax 4.5s ease-in-out infinite;
+}
+
+@keyframes parallax {
+  0%, 100% { transform: translateX(6px); }
+  50% { transform: translateX(-6px); }
+}
+
+@keyframes settle {
+  from { opacity: 0; transform: translateY(16px) scale(0.94); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ── Boutons ───────────────────────────────────────────────────────────── */
+.actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 15px 26px;
+  border-radius: var(--r-control);
+  font-size: 16px;
+  font-weight: 600;
+  text-decoration: none;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: var(--ink-muted);
+  background: rgba(255, 255, 255, 0.05);
+  transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1), background 0.2s;
+}
+.btn:hover { background: rgba(255, 255, 255, 0.1); color: var(--ink); }
+.btn:active { transform: scale(0.972); }
+
+.btn.primary {
+  background: linear-gradient(var(--azimuth), #6675e8);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.22);
+  box-shadow: 0 14px 30px rgba(124, 140, 255, 0.34);
+}
+.btn.primary:hover { color: #fff; filter: brightness(1.07); }
+
+/* ── Sections ──────────────────────────────────────────────────────────── */
+section { padding: 54px 0; }
+
+h2 {
+  font-size: 27px;
+  margin: 0 0 8px;
+  letter-spacing: -0.5px;
+}
+
+.sub { color: var(--ink-muted); margin: 0 0 26px; }
+
+.label {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(258px, 1fr));
+}
+
+.feature h3 { margin: 14px 0 6px; font-size: 17px; }
+.feature p { color: var(--ink-muted); margin: 0; font-size: 14.5px; }
+
+.glyph {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  font-size: 19px;
+  background: rgba(124, 140, 255, 0.14);
+  color: var(--azimuth);
+}
+/* Ambre réservé au module GPS — c'est sa seule apparition sur ce site. */
+.glyph.signal { background: rgba(245, 166, 91, 0.14); color: var(--signal); }
+
+/* ── Rail d'étapes ─────────────────────────────────────────────────────── */
+/* Repris de `PairingScreen` : à chaque instant une seule étape est allumée. */
+.rail { display: grid; gap: 0; }
+
+.stepline { display: flex; gap: 15px; align-items: flex-start; }
+
+.dot {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  background: rgba(124, 140, 255, 0.2);
+  color: var(--azimuth);
+  border: 1.2px solid rgba(124, 140, 255, 0.55);
+  box-shadow: 0 0 16px rgba(124, 140, 255, 0.35);
+}
+
+.pipe {
+  width: 1.5px;
+  height: 26px;
+  margin-left: 13px;
+  background: var(--horizon);
+}
+
+.stepline h4 { margin: 3px 0 3px; font-size: 15px; }
+.stepline p { margin: 0; color: var(--ink-muted); font-size: 14px; }
+
+code, .mono { font-family: var(--mono); font-size: 13px; }
+code {
+  background: rgba(255, 255, 255, 0.06);
+  padding: 2px 7px;
+  border-radius: 6px;
+  color: var(--ink);
+}
+
+/* ── Avertissement ─────────────────────────────────────────────────────── */
+.notice {
+  border: 1px solid rgba(245, 166, 91, 0.28);
+  background: rgba(245, 166, 91, 0.07);
+  border-radius: var(--r-card);
+  padding: 20px 22px;
+}
+.notice strong { color: var(--signal); }
+.notice p { margin: 6px 0 0; color: var(--ink-muted); font-size: 14.5px; }
+
+/* ── Pied ──────────────────────────────────────────────────────────────── */
+footer {
+  border-top: 1px solid rgba(42, 51, 82, 0.6);
+  padding: 34px 0 46px;
+  color: var(--ink-faint);
+  font-size: 13.5px;
+}
+footer a { color: var(--ink-muted); }
+
+/* ── Révélation au défilement ──────────────────────────────────────────── */
+.reveal {
+  opacity: 0;
+  transform: translateY(16px);
+  transition: opacity 0.6s, transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.reveal.on { opacity: 1; transform: none; }
+
+/* Le mouvement est un confort, pas un message : qui le refuse garde tout. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .reveal { opacity: 1; transform: none; }
+}
+
+@media (max-width: 640px) {
+  .bar nav { display: none; }
+  .hero { padding: 58px 0 42px; }
+  .glass { padding: 20px; }
+}

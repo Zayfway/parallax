@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Parallax — sideloading et GPS, sans ordinateur</title>
+<meta name="description" content="Installe SideStore et LiveContainer, et simule ta position GPS, entièrement depuis ton iPhone. Sans Mac, sans PC, sans câble.">
+<meta name="theme-color" content="#0a0d18">
+
+<meta property="og:title" content="Parallax">
+<meta property="og:description" content="Sideloading et spoofing GPS, entièrement on-device. iOS 17.4+.">
+<meta property="og:image" content="icon-512.png">
+<meta property="og:type" content="website">
+
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-32.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <div class="bar">
+    <img src="icon-180.png" alt="">
+    <strong>Parallax</strong>
+    <nav>
+      <a href="#quoi">Ce que ça fait</a>
+      <a href="#comment">Comment</a>
+      <a href="#installer">Installer</a>
+      <a href="https://github.com/Zayfway/parallax">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+  <!-- ── Héros ────────────────────────────────────────────────────────── -->
+  <div class="wrap hero">
+    <img class="mark" src="icon-512.png" alt="Icône de Parallax">
+    <h1>Ton iPhone, <span class="shift" data-echo="ailleurs">ailleurs</span></h1>
+    <p class="lede">
+      Installe SideStore et LiveContainer, et déclare la position de ton choix.
+      Entièrement depuis l'appareil — sans Mac, sans PC, sans câble.
+    </p>
+    <div class="actions">
+      <a class="btn primary" href="#installer">Installer Parallax</a>
+      <a class="btn" href="https://github.com/Zayfway/parallax">Voir le code</a>
+    </div>
+  </div>
+
+  <!-- ── Ce que ça fait ───────────────────────────────────────────────── -->
+  <section id="quoi" class="wrap">
+    <span class="label">Ce que ça fait</span>
+    <h2>Deux outils, une seule app</h2>
+    <p class="sub">Chacun marchait déjà séparément, mais jamais sans ordinateur.</p>
+
+    <div class="grid">
+      <div class="glass feature reveal">
+        <div class="glyph">↓</div>
+        <h3>Sideloading complet</h3>
+        <p>
+          Compte Apple, certificat, profil de provisionnement, signature,
+          transfert, installation. La chaîne entière tourne sur l'iPhone —
+          y compris la signature, faite avec ton propre certificat.
+        </p>
+      </div>
+
+      <div class="glass feature reveal">
+        <div class="glyph">⚿</div>
+        <h3>Jumelage sans PC</h3>
+        <p>
+          Le protocole RPPairing permet à l'iPhone de se jumeler avec un hôte
+          qui tourne sur lui-même. « Jumeler avec Parallax » apparaît dans
+          Réglages, un code s'affiche, et c'est fait.
+        </p>
+      </div>
+
+      <div class="glass feature reveal">
+        <div class="glyph signal">◎</div>
+        <h3>Position simulée</h3>
+        <p>
+          Pose un point sur la carte, ou fais un vrai trajet : voiture et
+          marche suivent les routes réelles, l'avion suit une orthodromie.
+          La vitesse s'accélère sans déformer la trajectoire.
+        </p>
+      </div>
+
+      <div class="glass feature reveal">
+        <div class="glyph">⌸</div>
+        <h3>Certificats gérés</h3>
+        <p>
+          Liste, génère et révoque tes certificats de développement. Le nombre
+          d'emplacements affiché vient d'Apple, pas d'une valeur écrite en dur
+          qui serait fausse sur un compte payant.
+        </p>
+      </div>
+
+      <div class="glass feature reveal">
+        <div class="glyph">◧</div>
+        <h3>Open source</h3>
+        <p>
+          Tout le code est lisible, licence MIT. Le cœur natif est en Rust,
+          l'interface en SwiftUI, et les builds sont produits publiquement par
+          GitHub Actions.
+        </p>
+      </div>
+
+      <div class="glass feature reveal">
+        <div class="glyph">◈</div>
+        <h3>iOS 17.4 et plus</h3>
+        <p>
+          Testé sur iOS 27. Le jumelage sans ordinateur demande une version
+          récente ; en dessous, un fichier de jumelage importé donne accès au
+          module GPS.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Comment ──────────────────────────────────────────────────────── -->
+  <section id="comment" class="wrap">
+    <span class="label">Comment</span>
+    <h2>Quatre étapes, une seule fois</h2>
+    <p class="sub">Ensuite tout est mémorisé — l'app retrouve son certificat et son jumelage.</p>
+
+    <div class="glass reveal">
+      <div class="rail">
+        <div class="stepline">
+          <div class="dot">1</div>
+          <div>
+            <h4>Un VPN loopback</h4>
+            <p>
+              Installe <strong>LocalDevVPN</strong> ou <strong>StosVPN</strong>, et
+              touche Connect. Le lien avec l'appareil passe par son tunnel local,
+              pas par le Wi-Fi.
+            </p>
+          </div>
+        </div>
+        <div class="pipe"></div>
+
+        <div class="stepline">
+          <div class="dot">2</div>
+          <div>
+            <h4>Le jumelage</h4>
+            <p>
+              Parallax s'annonce sur le réseau local. Va dans
+              <code>Réglages › Confidentialité et sécurité › Mode développeur</code>,
+              touche « Jumeler avec Parallax », recopie les six chiffres.
+            </p>
+          </div>
+        </div>
+        <div class="pipe"></div>
+
+        <div class="stepline">
+          <div class="dot">3</div>
+          <div>
+            <h4>Ton compte Apple</h4>
+            <p>
+              Il sert à signer. Le mot de passe ne quitte pas l'appareil, mais
+              l'attestation Apple passe par un relais Anisette — c'est structurel
+              à tous les outils de cette famille, et le serveur est configurable.
+            </p>
+          </div>
+        </div>
+        <div class="pipe"></div>
+
+        <div class="stepline">
+          <div class="dot">4</div>
+          <div>
+            <h4>Installe</h4>
+            <p>
+              Choisis SideStore, ou SideStore + LiveContainer. Le téléchargement,
+              la signature et l'installation s'enchaînent, et tu vois passer
+              chaque étape.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Installer ────────────────────────────────────────────────────── -->
+  <section id="installer" class="wrap">
+    <span class="label">Installer</span>
+    <h2>Récupérer Parallax</h2>
+    <p class="sub">L'IPA est produit publiquement par GitHub Actions, à chaque version.</p>
+
+    <div class="glass reveal" style="margin-bottom:14px">
+      <h3 style="margin:0 0 8px;font-size:17px">Télécharger l'IPA</h3>
+      <p style="color:var(--ink-muted);margin:0 0 18px;font-size:14.5px">
+        Non signé, volontairement. Signer côté serveur imposerait de déposer une
+        clé privée Apple dans un dépôt public — inutile ici, et une très mauvaise
+        idée. Installe-le avec SideStore, AltStore ou Feather, qui le signeront
+        avec ton certificat.
+      </p>
+      <div class="actions" style="justify-content:flex-start">
+        <a class="btn primary" href="https://github.com/Zayfway/parallax/releases/latest">
+          Dernière version
+        </a>
+        <a class="btn" href="https://github.com/Zayfway/parallax/actions">
+          Builds de développement
+        </a>
+      </div>
+    </div>
+
+    <div class="notice reveal">
+      <strong>Installation directe : bientôt</strong>
+      <p>
+        L'installation en un geste depuis cette page, sans passer par un autre
+        outil, arrive dans une prochaine version. Elle demandera un profil DNS
+        et des certificats de signature, et sera proposée sous plusieurs
+        certificats pour qu'il reste toujours un chemin ouvert si l'un d'eux est
+        révoqué.
+      </p>
+    </div>
+  </section>
+
+  <!-- ── Honnêteté ────────────────────────────────────────────────────── -->
+  <section class="wrap">
+    <div class="glass reveal">
+      <span class="label">Ce qu'il faut savoir</span>
+      <h2 style="margin-top:8px">Sans enjoliver</h2>
+      <p style="color:var(--ink-muted);font-size:15px">
+        Ton mot de passe Apple ne quitte pas l'appareil : il sert localement à la
+        connexion. Mais l'authentification Apple exige des données d'attestation
+        — <strong>Anisette</strong> — qu'un iPhone non jailbreaké ne peut pas
+        produire. Elles viennent donc d'un serveur relais tiers.
+      </p>
+      <p style="color:var(--ink-muted);font-size:15px">
+        Autrement dit, l'identifiant et le contexte d'authentification transitent
+        par une machine que tu ne contrôles pas. Ce n'est pas un défaut de cette
+        app, c'est structurel à toute la famille AltStore et SideStore. Écrire
+        « vos identifiants ne quittent jamais votre appareil » serait faux, donc
+        on ne l'écrit pas — et le serveur est configurable dans les réglages.
+      </p>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    Parallax — logiciel libre, licence MIT ·
+    <a href="https://github.com/Zayfway/parallax">github.com/Zayfway/parallax</a>
+    <br>
+    Non affilié à Apple. SideStore, AltStore et LiveContainer appartiennent à
+    leurs auteurs respectifs.
+  </div>
+</footer>
+
+<script>
+  // Révélation à l'entrée dans le champ. Une seule fois par élément : une
+  // animation qui rejoue à chaque défilement devient du bruit.
+  const io = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      entry.target.classList.add('on');
+      io.unobserve(entry.target);
+    }
+  }, { threshold: 0.14 });
+
+  document.querySelectorAll('.reveal').forEach((el, i) => {
+    // Même cascade que `PX.Motion.stagger` : 45 ms, assez pour lire la
+    // séquence, trop court pour attendre.
+    el.style.transitionDelay = `${Math.min(i, 6) * 45}ms`;
+    io.observe(el);
+  });
+</script>
+
+</body>
+</html>
