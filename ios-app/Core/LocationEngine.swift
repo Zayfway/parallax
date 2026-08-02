@@ -314,7 +314,9 @@ final class LocationEngine: ObservableObject {
                     playingTrack = nil
                     trackProgress = 1
                     let last = currentFix ?? track.points.last!.coordinate
-                    source = .fixed(last)
+                    // `self.` obligatoire : `guard let source` a introduit une
+                    // constante locale qui masque la propriété d'instance.
+                    self.source = .fixed(last)
                     target = last
                 }
             }

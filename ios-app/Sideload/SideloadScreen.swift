@@ -3,7 +3,7 @@ import SwiftUI
 // ═══════════════════════════════════════════════════════════════════════════
 // ONGLET INSTALLER
 //
-// La fonctionnalité principale : mettre SideStore, ou SideStore + LiveContainer,
+// La fonctionnalité principale : mettre SideStore, et LiveContainer,
 // sur l'appareil sans ordinateur. Trois préalables doivent tenir en même temps
 // — compte Apple, identité de l'appareil, lien RSD — et c'est précisément là
 // que l'utilisateur se perd s'il doit deviner lequel manque.
@@ -54,21 +54,38 @@ struct SideloadScreen: View {
 
     enum InstallTarget: String, CaseIterable {
         case sideStore = "SideStore"
-        case withLiveContainer = "+ LiveContainer"
+        case liveContainer = "LiveContainer"
 
-        /// Les variantes correspondent aux `SpecialApp` qu'isideload sait
-        /// reconnaître : `SideStore` et `SideStoreLc`. C'est Rust qui confirmera
-        /// laquelle il a réellement détectée dans l'IPA signé.
+        /// SideStore publie un build stable et un nightly. LiveContainer est une
+        /// app compagnon distincte (dépôt LiveContainer/LiveContainer), avec un
+        /// seul canal — d'où l'URL fixe. L'ancien `SideStore-LiveContainer.ipa`
+        /// n'existe plus dans les releases SideStore (404) : on installe donc
+        /// LiveContainer comme sa propre app, ce qui est la réalité aujourd'hui.
+        /// C'est Rust qui confirmera le `SpecialApp` détecté dans l'IPA signé.
         func url(for channel: Channel) -> String {
-            switch (self, channel) {
-            case (.sideStore, .stable):
-                "https://github.com/SideStore/SideStore/releases/latest/download/SideStore.ipa"
-            case (.sideStore, .nightly):
-                "https://github.com/SideStore/SideStore/releases/download/nightly/SideStore.ipa"
-            case (.withLiveContainer, .stable):
-                "https://github.com/SideStore/SideStore/releases/latest/download/SideStore-LiveContainer.ipa"
-            case (.withLiveContainer, .nightly):
-                "https://github.com/SideStore/SideStore/releases/download/nightly/SideStore-LiveContainer.ipa"
+            switch self {
+            case .sideStore:
+                switch channel {
+                case .stable:
+                    "https://github.com/SideStore/SideStore/releases/latest/download/SideStore.ipa"
+                case .nightly:
+                    "https://github.com/SideStore/SideStore/releases/download/nightly/SideStore.ipa"
+                }
+            case .liveContainer:
+                "https://github.com/LiveContainer/LiveContainer/releases/latest/download/LiveContainer.ipa"
+            }
+        }
+
+        /// LiveContainer n'a pas de canaux : cacher le sélecteur évite de laisser
+        /// croire qu'il change quelque chose.
+        var hasChannels: Bool { self == .sideStore }
+
+        var blurb: String {
+            switch self {
+            case .sideStore:
+                "Le magasin : installe et re-signe tes apps tout seul, tous les sept jours."
+            case .liveContainer:
+                "Le conteneur : exécute d'autres apps sans consommer d'emplacement de signature. À poser après SideStore."
             }
         }
     }
@@ -500,10 +517,21 @@ struct SideloadScreen: View {
         VStack(alignment: .leading, spacing: PX.Space.snug) {
             SectionLabel("Application")
             SegmentedRow(selection: $target, options: InstallTarget.allCases) { $0.rawValue }
-            SegmentedRow(selection: $channel, options: Channel.allCases) { $0.rawValue }
+
+            Text(target.blurb)
+                .font(PX.Font.body(12))
+                .foregroundStyle(PX.Color.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if target.hasChannels {
+                SegmentedRow(selection: $channel, options: Channel.allCases) { $0.rawValue }
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
         .padding(PX.Space.base)
         .glassCard()
+        .animation(PX.Motion.settle, value: target)
     }
 
     private var actionLabel: String {
