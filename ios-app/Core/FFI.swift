@@ -143,6 +143,52 @@ extension FFI {
         defer { px_string_free(raw) }
         return String(cString: raw)
     }
+
+    /// Installe un `.ipa` signé **hors-ligne** avec un certificat importé
+    /// (`.p12` + `.mobileprovision`) — sans compte Apple. Ne demande que le
+    /// tunnel. Même options d'injection que le chemin en ligne.
+    ///
+    /// **Bloquant** — signature locale puis transfert. `DispatchQueue.global`.
+    @discardableResult
+    static func installIPAWithCertificate(
+        tunnel: OpaquePointer,
+        ipaPath: String,
+        p12Path: String,
+        p12Password: String,
+        profilePath: String,
+        dylibs: [String] = [],
+        injectionPath: String = "@executable_path",
+        injectionFolder: String = "Frameworks",
+        injectIntoExtensions: Bool = false
+    ) throws -> String {
+        let owned = dylibs.map { strdup($0) }
+        defer { owned.forEach { free($0) } }
+        let ptrs: [UnsafePointer<CChar>?] = owned.map { $0.map { UnsafePointer($0) } }
+
+        let raw = ipaPath.withCString { ipa in
+            p12Path.withCString { p12 in
+                p12Password.withCString { pass in
+                    profilePath.withCString { prof in
+                        injectionPath.withCString { ipath in
+                            injectionFolder.withCString { ifolder in
+                                ptrs.withUnsafeBufferPointer { buf in
+                                    px_install_ipa_p12(
+                                        tunnel, ipa, p12, pass, prof,
+                                        buf.baseAddress, UInt(dylibs.count),
+                                        ipath, ifolder, injectIntoExtensions,
+                                        pxInstallProgress
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        guard let raw else { throw Failure(code: PX_ERR_INTERNAL, detail: lastError) }
+        defer { px_string_free(raw) }
+        return String(cString: raw)
+    }
 }
 
 /// Pont de progression Rust → Swift.

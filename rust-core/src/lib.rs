@@ -26,6 +26,7 @@ pub mod inject;
 pub mod install;
 pub mod location;
 pub mod pairing;
+pub mod sign_offline;
 pub mod tunnel;
 
 // Réexporte les symboles #[no_mangle] d'idevice-ffi dans notre staticlib unique.

@@ -65,9 +65,22 @@ struct SideloadScreen: View {
     /// d'injection, liste séparée pour coller à l'organisation de Feather.
     @State private var frameworks: [URL] = []
     /// Un seul sélecteur partagé ; on mémorise ce qu'on importe.
-    private enum ImportKind { case ipa, tweak, framework }
+    private enum ImportKind { case ipa, tweak, framework, p12, profile }
     @State private var importKind: ImportKind = .ipa
     @State private var showingImporter = false
+
+    // ── Méthode de signature ───────────────────────────────────────────────
+    /// Compte Apple (défaut) ou certificat importé pour qui en a acheté un.
+    enum SigningMethod: String, CaseIterable {
+        case appleAccount = "Compte Apple"
+        case certificate = "Certificat"
+    }
+    @State private var signingMethod: SigningMethod = .appleAccount
+    @State private var p12URL: URL?
+    @State private var p12Name = ""
+    @State private var p12Password = ""
+    @State private var profileURL: URL?
+    @State private var profileName = ""
     /// Section « Avancé » façon Feather : le groupe Modify et ses sous-listes se
     /// déplient à la demande.
     @State private var modifyOpen = true
@@ -132,6 +145,7 @@ struct SideloadScreen: View {
     /// l'utilisateur les remplit, pour que le rail puisse dire « tu es ici ».
     enum Phase: Equatable {
         case needsAccount
+        case needsCertificate
         case needsPairing
         case needsLink
         case ready
@@ -144,17 +158,17 @@ struct SideloadScreen: View {
         /// troisième restait éternellement active, jamais validée.
         var step: Int {
             switch self {
-            case .needsAccount:              1
-            case .needsPairing, .needsLink:  2
-            case .ready, .working:           3
-            case .done:                      4
-            case .failed:                    0
+            case .needsAccount, .needsCertificate: 1
+            case .needsPairing, .needsLink:        2
+            case .ready, .working:                 3
+            case .done:                            4
+            case .failed:                          0
             }
         }
 
         var tint: Color {
             switch self {
-            case .needsAccount, .needsPairing, .needsLink: PX.Color.inkFaint
+            case .needsAccount, .needsCertificate, .needsPairing, .needsLink: PX.Color.inkFaint
             case .ready:                                   PX.Color.azimuth
             case .working:                                 PX.Color.azimuth
             case .done:                                    PX.Color.verdant
@@ -164,37 +178,40 @@ struct SideloadScreen: View {
 
         var label: String {
             switch self {
-            case .needsAccount: "Compte requis"
-            case .needsPairing: "Jumelage requis"
-            case .needsLink:    "Lien requis"
-            case .ready:        "Prêt"
-            case .working:      "Installation"
-            case .done:         "Installé"
-            case .failed:       "Échec"
+            case .needsAccount:     "Compte requis"
+            case .needsCertificate: "Certificat requis"
+            case .needsPairing:     "Jumelage requis"
+            case .needsLink:        "Lien requis"
+            case .ready:            "Prêt"
+            case .working:          "Installation"
+            case .done:             "Installé"
+            case .failed:           "Échec"
             }
         }
 
         var icon: String {
             switch self {
-            case .needsAccount: "person.crop.circle.badge.exclamationmark"
-            case .needsPairing: "lock.iphone"
-            case .needsLink:    "link.badge.plus"
-            case .ready:        "checkmark.circle"
-            case .working:      "arrow.down.circle"
-            case .done:         "checkmark.seal.fill"
-            case .failed:       "exclamationmark.triangle.fill"
+            case .needsAccount:     "person.crop.circle.badge.exclamationmark"
+            case .needsCertificate: "signature"
+            case .needsPairing:     "lock.iphone"
+            case .needsLink:        "link.badge.plus"
+            case .ready:            "checkmark.circle"
+            case .working:          "arrow.down.circle"
+            case .done:             "checkmark.seal.fill"
+            case .failed:           "exclamationmark.triangle.fill"
             }
         }
 
         var detail: String {
             switch self {
-            case .needsAccount: "connecte-toi ci-dessous"
-            case .needsPairing: "aucune identité d'appareil — passe par Jumelage"
-            case .needsLink:    "établis le lien dans l'onglet Jumelage"
-            case .ready:        "tout est en place"
+            case .needsAccount:     "connecte-toi ci-dessous"
+            case .needsCertificate: "importe un .p12 et un .mobileprovision ci-dessous"
+            case .needsPairing:     "aucune identité d'appareil — passe par Jumelage"
+            case .needsLink:        "établis le lien dans l'onglet Jumelage"
+            case .ready:            "tout est en place"
             case .working(_, let what): what.lowercased()
-            case .done(let name): "\(name) est sur ton écran d'accueil"
-            case .failed:       "voir le détail ci-dessous"
+            case .done(let name):   "\(name) est sur ton écran d'accueil"
+            case .failed:           "voir le détail ci-dessous"
             }
         }
     }
@@ -203,7 +220,12 @@ struct SideloadScreen: View {
         if let failure { return .failed(failure) }
         if let installed { return .done(installed) }
         if let progress, installing { return .working(progress.percent, progress.label) }
-        if !account.isConnected { return .needsAccount }
+        switch signingMethod {
+        case .appleAccount:
+            if !account.isConnected { return .needsAccount }
+        case .certificate:
+            if p12URL == nil || profileURL == nil { return .needsCertificate }
+        }
         if FFI.pairedDevice(besidePairingFile: PairingStore.fileURL) == nil { return .needsPairing }
         if connection.tunnelPointer == nil { return .needsLink }
         return .ready
@@ -225,10 +247,7 @@ struct SideloadScreen: View {
                     rail
                         .appear(2, shown)
 
-                    // La carte de compte est celle de l'écran Certificats :
-                    // une seule session Apple dans toute l'app, donc une seule
-                    // interface pour l'ouvrir.
-                    AppleAccountCard()
+                    signatureCard
                         .appear(3, shown)
 
                     targetCard
@@ -273,12 +292,8 @@ struct SideloadScreen: View {
         // gérer, et le callback du délégué est fiable.
         .sheet(isPresented: $showingImporter) {
             DocumentPicker(
-                contentTypes: importKind == .ipa
-                    ? [UTType(filenameExtension: "ipa") ?? .data]
-                    // Tweaks & frameworks : .dylib (palier 1) et .deb (palier 2/3).
-                    : [UTType(filenameExtension: "dylib"),
-                       UTType(filenameExtension: "deb")].compactMap { $0 } + [.data],
-                allowsMultiple: importKind != .ipa
+                contentTypes: pickerTypes,
+                allowsMultiple: importKind == .tweak || importKind == .framework
             ) { urls in
                 handlePicked(urls)
             }
@@ -842,11 +857,94 @@ struct SideloadScreen: View {
         .padding(.bottom, PX.Space.snug)
     }
 
+    // MARK: - Signature (compte Apple ou certificat importé)
+
+    /// Choix de la méthode de signature, puis la carte correspondante : la
+    /// session Apple partagée, ou l'import d'un certificat acheté.
+    private var signatureCard: some View {
+        VStack(spacing: PX.Space.snug) {
+            SegmentedRow(selection: $signingMethod, options: SigningMethod.allCases) { $0.rawValue }
+                .animation(PX.Motion.tap, value: signingMethod)
+
+            if signingMethod == .appleAccount {
+                AppleAccountCard()
+                    .transition(.opacity)
+            } else {
+                certificateCard
+                    .transition(.opacity)
+            }
+        }
+        .animation(PX.Motion.settle, value: signingMethod)
+        .animation(PX.Motion.settle, value: p12URL)
+        .animation(PX.Motion.settle, value: profileURL)
+    }
+
+    /// Import d'un certificat acheté : `.p12` (+ mot de passe) et
+    /// `.mobileprovision`. Aucune donnée ne quitte l'appareil.
+    private var certificateCard: some View {
+        VStack(alignment: .leading, spacing: PX.Space.snug) {
+            HStack {
+                SectionLabel("Certificat importé")
+                Spacer()
+                if p12URL != nil && profileURL != nil {
+                    Tag("Prêt", color: PX.Color.verdant, icon: "checkmark.seal.fill")
+                } else {
+                    Tag("Incomplet", color: PX.Color.inkFaint, icon: "hourglass")
+                }
+            }
+
+            insetGroup {
+                Button { importKind = .p12; showingImporter = true } label: {
+                    row(icon: p12URL == nil ? "key" : "key.fill",
+                        title: p12Name.isEmpty ? "Certificat (.p12)" : p12Name,
+                        subtitle: p12URL == nil ? "toucher pour choisir" : "importé",
+                        trailing: certMark(done: p12URL != nil))
+                }
+                .buttonStyle(.plain)
+
+                rowDivider
+
+                HStack(spacing: PX.Space.snug) {
+                    IconTile(system: "lock.fill", size: 32)
+                    SecureField("Mot de passe du .p12", text: $p12Password)
+                        .font(PX.Font.body(14))
+                        .foregroundStyle(PX.Color.ink)
+                }
+                .padding(.horizontal, PX.Space.base)
+                .padding(.vertical, 10)
+
+                rowDivider
+
+                Button { importKind = .profile; showingImporter = true } label: {
+                    row(icon: profileURL == nil ? "doc.badge.gearshape" : "doc.badge.gearshape.fill",
+                        title: profileName.isEmpty ? "Profil (.mobileprovision)" : profileName,
+                        subtitle: profileURL == nil ? "toucher pour choisir" : "importé",
+                        trailing: certMark(done: profileURL != nil))
+                }
+                .buttonStyle(.plain)
+            }
+
+            Text("Signe avec ton propre certificat, sans compte Apple. Le .p12 et le profil restent sur l'appareil. Le profil doit autoriser cet appareil (ad-hoc) ou être un profil entreprise.")
+                .font(PX.Font.body(11))
+                .foregroundStyle(PX.Color.inkFaint)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(PX.Space.base)
+        .glassCard(emphasis: true)
+    }
+
+    private func certMark(done: Bool) -> some View {
+        Image(systemName: done ? "checkmark.circle.fill" : "chevron.right")
+            .font(.system(size: done ? 15 : 13, weight: .semibold))
+            .foregroundStyle(done ? PX.Color.verdant : PX.Color.inkFaint)
+    }
+
     private var actionLabel: String {
         switch phase {
         case .working(let percent, _): "Installation… \(percent) %"
         case .done:                    target == .custom ? "Réinstaller" : "Réinstaller \(target.rawValue)"
         case .needsAccount:            "Connecte ton compte Apple"
+        case .needsCertificate:        "Importe ton certificat"
         case .needsPairing:            "Jumelage requis"
         case .needsLink:               "Établis le lien"
         default:                       target == .custom ? "Installer l'IPA" : "Installer \(target.rawValue)"
@@ -864,7 +962,13 @@ struct SideloadScreen: View {
     /// de mot de passe locaux ne conditionnent plus rien — la session vient du
     /// modèle partagé.
     private var canInstall: Bool {
-        guard account.isConnected, connection.tunnelPointer != nil, !installing else { return false }
+        guard connection.tunnelPointer != nil, !installing else { return false }
+        switch signingMethod {
+        case .appleAccount:
+            guard account.isConnected else { return false }
+        case .certificate:
+            guard p12URL != nil, profileURL != nil else { return false }
+        }
         if target == .custom {
             return customIPA != nil
                 || !customURLText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -896,27 +1000,67 @@ struct SideloadScreen: View {
                 failure = "Lien indisponible. Passe par l'onglet Jumelage."
                 return
             }
-            guard let session = account.sessionPointer else {
-                failure = "Connecte-toi à ton compte Apple avant d'installer."
-                return
-            }
 
             let ipa = try await resolveIPA()
             let dylibs = target == .custom ? (tweaks + frameworks).map(\.path) : []
-            let special = try await onBackground {
-                try FFI.installIPA(
-                    session: session, tunnel: tunnel,
-                    ipaPath: ipa.path, device: device, dylibs: dylibs,
-                    injectionPath: injectionPath,
-                    injectionFolder: injectionFolder,
-                    injectIntoExtensions: injectExtensions
-                )
+
+            let special: String
+            switch signingMethod {
+            case .appleAccount:
+                guard let session = account.sessionPointer else {
+                    failure = "Connecte-toi à ton compte Apple avant d'installer."
+                    return
+                }
+                special = try await onBackground {
+                    try FFI.installIPA(
+                        session: session, tunnel: tunnel,
+                        ipaPath: ipa.path, device: device, dylibs: dylibs,
+                        injectionPath: injectionPath,
+                        injectionFolder: injectionFolder,
+                        injectIntoExtensions: injectExtensions
+                    )
+                }
+            case .certificate:
+                guard let p12 = p12URL, let profile = profileURL else {
+                    failure = "Importe un certificat (.p12) et un profil (.mobileprovision)."
+                    return
+                }
+                let password = p12Password
+                special = try await onBackground {
+                    try FFI.installIPAWithCertificate(
+                        tunnel: tunnel,
+                        ipaPath: ipa.path,
+                        p12Path: p12.path,
+                        p12Password: password,
+                        profilePath: profile.path,
+                        dylibs: dylibs,
+                        injectionPath: injectionPath,
+                        injectionFolder: injectionFolder,
+                        injectIntoExtensions: injectExtensions
+                    )
+                }
             }
             installed = special.isEmpty ? installedLabel : special
             doneCount += 1
             LogBridge.shared.note("installation terminée : \(installed ?? "")")
         } catch {
             failure = error.localizedDescription
+        }
+    }
+
+    /// Types de fichiers proposés par le sélecteur selon ce qu'on importe.
+    private var pickerTypes: [UTType] {
+        switch importKind {
+        case .ipa:
+            return [UTType(filenameExtension: "ipa") ?? .data]
+        case .tweak, .framework:
+            return [UTType(filenameExtension: "dylib"),
+                    UTType(filenameExtension: "deb")].compactMap { $0 } + [.data]
+        case .p12:
+            return [UTType(filenameExtension: "p12"),
+                    UTType.pkcs12].compactMap { $0 } + [.data]
+        case .profile:
+            return [UTType(filenameExtension: "mobileprovision") ?? .data]
         }
     }
 
@@ -950,6 +1094,22 @@ struct SideloadScreen: View {
                     let dest = try copyIntoTemp(src)
                     if !frameworks.contains(dest) {
                         withAnimation(PX.Motion.settle) { frameworks.append(dest) }
+                    }
+                }
+            case .p12:
+                if let first = urls.first {
+                    let dest = try copyIntoTemp(first)
+                    withAnimation(PX.Motion.settle) {
+                        p12URL = dest
+                        p12Name = first.lastPathComponent
+                    }
+                }
+            case .profile:
+                if let first = urls.first {
+                    let dest = try copyIntoTemp(first)
+                    withAnimation(PX.Motion.settle) {
+                        profileURL = dest
+                        profileName = first.lastPathComponent
                     }
                 }
             }

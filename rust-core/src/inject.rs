@@ -468,7 +468,7 @@ fn decompress(data: &[u8], name: &str) -> Result<Vec<u8>, String> {
 
 // ── Localisation du bundle et de l'exécutable ──────────────────────────────
 
-fn find_app_dir(work: &Path) -> Result<PathBuf, String> {
+pub(crate) fn find_app_dir(work: &Path) -> Result<PathBuf, String> {
     let payload = work.join("Payload");
     let entries =
         std::fs::read_dir(&payload).map_err(|e| format!("Payload introuvable : {e}"))?;
@@ -758,7 +758,7 @@ fn rewrite_deps_thin(
 
 // ── Zip / dézip ────────────────────────────────────────────────────────────
 
-fn extract_ipa(ipa: &Path, dest: &Path) -> Result<(), String> {
+pub(crate) fn extract_ipa(ipa: &Path, dest: &Path) -> Result<(), String> {
     let file = std::fs::File::open(ipa).map_err(|e| format!("ouverture de l'IPA : {e}"))?;
     let mut archive =
         zip::ZipArchive::new(file).map_err(|e| format!("IPA illisible (zip) : {e}"))?;

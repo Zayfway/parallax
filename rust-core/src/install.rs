@@ -139,6 +139,94 @@ pub unsafe extern "C" fn px_install_ipa(
     }
 }
 
+/// Installe un `.ipa` signé **hors-ligne** avec un certificat importé
+/// (`.p12` + `.mobileprovision`) — sans compte Apple. Injecte les tweaks
+/// éventuels, signe, transfère et installe par le tunnel.
+///
+/// Rend une chaîne vide en cas de succès (pas de détection d'app spéciale ici),
+/// NULL en cas d'échec. À libérer par `px_string_free`.
+///
+/// # Safety
+/// `tunnel` issu de `px_tunnel_connect`, encore vivant. Chaînes UTF-8 NUL.
+#[no_mangle]
+pub unsafe extern "C" fn px_install_ipa_p12(
+    tunnel: *mut PxTunnel,
+    ipa_path: *const c_char,
+    p12_path: *const c_char,
+    p12_password: *const c_char,
+    profile_path: *const c_char,
+    dylib_paths: *const *const c_char,
+    dylib_count: usize,
+    injection_path: *const c_char,
+    injection_folder: *const c_char,
+    inject_into_extensions: bool,
+    on_progress: PxProgressCallback,
+) -> *mut c_char {
+    clear_last_error();
+
+    if tunnel.is_null() {
+        set_last_error("px_install_ipa_p12 : tunnel nul");
+        return ptr::null_mut();
+    }
+    let (Some(ipa), Some(p12p), Some(profp)) =
+        (cstr(ipa_path), cstr(p12_path), cstr(profile_path))
+    else {
+        set_last_error("px_install_ipa_p12 : chemin IPA, p12 ou profil nul");
+        return ptr::null_mut();
+    };
+    let password = cstr(p12_password).unwrap_or_default();
+
+    let dylibs: Vec<String> = if dylib_paths.is_null() || dylib_count == 0 {
+        Vec::new()
+    } else {
+        std::slice::from_raw_parts(dylib_paths, dylib_count)
+            .iter()
+            .filter_map(|&p| unsafe { cstr(p) })
+            .collect()
+    };
+    let inject_path = cstr(injection_path).unwrap_or_default();
+    let inject_folder = cstr(injection_folder).unwrap_or_default();
+
+    #[cfg(all(feature = "device-account", feature = "device-pairing"))]
+    {
+        let p12_bytes = match std::fs::read(&p12p) {
+            Ok(b) => b,
+            Err(e) => {
+                set_last_error(format!("p12 illisible : {e}"));
+                return ptr::null_mut();
+            }
+        };
+        let profile_bytes = match std::fs::read(&profp) {
+            Ok(b) => b,
+            Err(e) => {
+                set_last_error(format!("profil illisible : {e}"));
+                return ptr::null_mut();
+            }
+        };
+        guard("px_install_ipa_p12", ptr::null_mut(), || {
+            match imp::install_offline(
+                tunnel, &ipa, &p12_bytes, &password, &profile_bytes, &dylibs,
+                &inject_path, &inject_folder, inject_into_extensions, on_progress,
+            ) {
+                Ok(name) => CString::new(name)
+                    .map(|c| c.into_raw())
+                    .unwrap_or(ptr::null_mut()),
+                Err(e) => {
+                    set_last_error(e);
+                    ptr::null_mut()
+                }
+            }
+        })
+    }
+    #[cfg(not(all(feature = "device-account", feature = "device-pairing")))]
+    {
+        let _ = (ipa, p12p, profp, password, dylibs, inject_path, inject_folder,
+                 inject_into_extensions, on_progress);
+        set_last_error("px_install_ipa_p12 : compilé sans --features device-account,device-pairing");
+        ptr::null_mut()
+    }
+}
+
 #[cfg(all(feature = "device-account", feature = "device-pairing"))]
 mod imp {
     use super::PxProgressCallback;
@@ -356,5 +444,88 @@ mod imp {
 
         step(on_progress, 100, "Installation terminée");
         Ok(special_name)
+    }
+
+    /// Chemin **hors-ligne** : signe avec un p12 importé, sans compte Apple ni
+    /// enregistrement d'appareil (le profil fourni déclare déjà ses appareils,
+    /// ou est un profil entreprise). Injection → signature p12 → transfert.
+    #[allow(clippy::too_many_arguments)]
+    pub unsafe fn install_offline(
+        tunnel: *mut PxTunnel,
+        ipa: &str,
+        p12_bytes: &[u8],
+        password: &str,
+        profile_bytes: &[u8],
+        dylibs: &[String],
+        inject_path: &str,
+        inject_folder: &str,
+        inject_into_extensions: bool,
+        on_progress: PxProgressCallback,
+    ) -> Result<String, String> {
+        let tun = crate::tunnel::tunnel_inner(tunnel);
+
+        // 1. Injection éventuelle des tweaks (avant signature).
+        let ipa_to_use = if dylibs.is_empty() {
+            ipa.to_string()
+        } else {
+            step(on_progress, 10, "Injection des tweaks");
+            let mut opts = crate::inject::InjectOptions::default();
+            if !inject_path.is_empty() {
+                opts.path_prefix = inject_path.to_string();
+            }
+            if !inject_folder.is_empty() {
+                opts.folder = inject_folder.to_string();
+            }
+            opts.into_extensions = inject_into_extensions;
+            crate::inject::inject_dylibs(ipa, dylibs, &opts)?
+        };
+
+        // 2. Extraction vers un dossier de travail.
+        step(on_progress, 25, "Préparation du bundle");
+        let work = std::env::temp_dir().join(format!("px-p12-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).map_err(|e| format!("dossier de travail : {e}"))?;
+        crate::inject::extract_ipa(Path::new(&ipa_to_use), &work)?;
+        if !dylibs.is_empty() {
+            let _ = std::fs::remove_file(&ipa_to_use);
+        }
+        let app = crate::inject::find_app_dir(&work)?;
+
+        // 3. Signature hors-ligne avec le certificat importé.
+        step(on_progress, 40, "Signature avec le certificat importé");
+        crate::sign_offline::sign_bundle_offline(&app, p12_bytes, password, profile_bytes)?;
+
+        // 4. Reconstitution de l'IPA (même raison qu'au chemin en ligne :
+        //    installer un dossier ferait un Upgrade silencieux, pas un Install).
+        step(on_progress, 55, "Préparation du paquet");
+        let payload = app
+            .parent()
+            .ok_or_else(|| "bundle signé sans dossier Payload".to_string())?;
+        let ipa_bytes = zip_payload(payload)?;
+
+        // 5. Transfert + installation par le tunnel.
+        step(on_progress, 60, "Transfert vers l'appareil");
+        let result = tun.runtime.block_on(async {
+            idevice::utils::installation::install_bytes_with_callback_rsd(
+                &mut tun.adapter,
+                &mut tun.rsd,
+                &ipa_bytes,
+                None,
+                |(percent, cb): (u64, PxProgressCallback)| async move {
+                    let scaled = 60 + (percent.min(100) as u32 * 40 / 100);
+                    if let Ok(c) = CString::new("Installation") {
+                        cb(scaled, c.as_ptr());
+                    }
+                },
+                on_progress,
+            )
+            .await
+        });
+
+        let _ = std::fs::remove_dir_all(&work);
+        result.map_err(|e| format!("installation : {e}"))?;
+
+        step(on_progress, 100, "Installation terminée");
+        Ok(String::new())
     }
 }

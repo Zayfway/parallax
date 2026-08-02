@@ -2914,6 +2914,7 @@ dependencies = [
  "flate2",
  "idevice 0.1.63",
  "isideload",
+ "isideload-apple-codesign",
  "lzma-rs",
  "mdns-sd",
  "once_cell",
