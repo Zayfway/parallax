@@ -48,32 +48,44 @@ Réglages affichent « stub » alors que le natif est bien là.
 
 ## État
 
-**Fonctionne sur appareil :**
+**Fonctionne sur appareil (chaîne complète, sans ordinateur) :**
 
 - Connexion Apple complète — anisette, 2FA appareil de confiance, session
   développeur, jeton `com.apple.gs.xcode.auth`
 - Jumelage RPPairing sans ordinateur : l'entrée « Pair with Parallax » apparaît
   dans Réglages › Mode développeur, le PIN s'affiche, le fichier est écrit
-- CI : Rust, symboles, xcodegen, archive, IPA
-
-**Écrit mais jamais exécuté :** signature d'IPA (`px_sign_ipa`).
+- Tunnel : RPPairing → RSD par le **VPN loopback** (10.7.0.1:49152), pas par
+  Bonjour/Wi-Fi. `tunnel.rs` monte adapter + RSD + services.
+- Certificats : liste, **génération** et révocation (`px_cert_list`,
+  `px_cert_create`, `px_cert_revoke`) ; le nombre d'emplacements vient d'Apple
+  (`maxActiveCerts`), pas d'une limite écrite en dur.
+- Installation : `ensure_device_registered` (avant signature, sinon Apple 8220)
+  → `sign_app` → **re-zip du Payload** → `install_bytes_with_callback_rsd`
+  (Install et non Upgrade). Cible SideStore **et** LiveContainer.
+- GPS : point posé, **itinéraire** (voiture/vélo/marche/avion + vitesse), import
+  GPX, joystick, **boucle**, **pause/reprise**, **favoris**. Session supervisée
+  qui se rétablit après une micro-coupure du tunnel.
+- CI : Rust, symboles, xcodegen, archive, IPA. Release taguée avec l'IPA.
 
 **À faire :**
 
-1. **Certificats** — `imp::list_certs` / `imp::revoke_cert` sont dans
-   `account.rs`, les entrées FFI (`px_cert_list`, `px_cert_revoke`,
-   `px_string_free`) restent à ajouter, puis l'écran à câbler.
-   Le compte est payant : la limite de trois affichée est fausse.
-2. **Installation** — enregistrer l'appareil (`ensure_device_registered`, sinon
-   erreur Apple **8220**), `sign_app`, puis AFC + `installation_proxy` par le
-   tunnel RSD. **Ne pas** utiliser `isideload::install_app` : il exige un
-   `IdeviceProvider` avec un `PairingFile` lockdown, incompatible avec le
-   RPPairing produit ici. SideInstaller ne l'utilise pas non plus.
-3. **GPS** — `location.rs:270`, `RsdService is not general enough` sur
-   `runtime.spawn`. Ni `&'static mut` ni turbofish ne suffisent : la contrainte
-   est d'ordre supérieur. Piste : contourner `connect_rsd` et appeler
-   `<RemoteServerClient<Box<dyn ReadWrite>> as RsdService>::from_stream(...)`,
-   comme le fait `idevice-ffi` pour ses services génériques.
+1. **Refonte du design (forme/style)** — demandée par l'auteur, à lancer à son
+   signal explicite. `DesignSystem.swift` reste la référence ; ne pas le
+   réécrire à l'aveugle.
+2. **Distribution publique** — `web/install/` a trois emplacements de
+   certificats interchangeables, désactivés tant qu'aucun certificat de
+   signature légitime n'est fourni. L'auteur alimente les IPA signés.
+
+**Pièges corrigés (pour ne pas les rejouer) :**
+
+- `LiveContainer` est une **app distincte** (`LiveContainer/LiveContainer`,
+  `releases/latest/LiveContainer.ipa`). L'ancien `SideStore-LiveContainer.ipa`
+  n'existe plus (404).
+- Dans `LocationEngine.tick`, `guard let source` masque la propriété : écrire
+  `self.source` pour figer la position en fin de trace.
+- Le GPS **fonctionne** : `location.rs` contourne `connect_rsd` (la contrainte
+  `RsdService is not general enough` naissait dans son corps) en résolvant le
+  port du service dans `rsd.services`, puis `RemoteServerClient::new`.
 
 ---
 
