@@ -34,7 +34,6 @@ import UniformTypeIdentifiers
 struct SideloadScreen: View {
 
     @EnvironmentObject private var connection: DeviceConnection
-    @EnvironmentObject private var location: LocationEngine
     @EnvironmentObject private var account: AppleAccountModel
     @StateObject private var log = LogBridge.shared
 
@@ -202,14 +201,7 @@ struct SideloadScreen: View {
 
             ScrollView {
                 VStack(spacing: PX.Space.snug) {
-                    InstrumentStrip(
-                        latitude: location.currentFix?.latitude,
-                        longitude: location.currentFix?.longitude,
-                        sessionLabel: connection.tunnelState.shortLabel,
-                        live: location.state == .simulating
-                    )
-
-                    header
+                    ScreenHeader("Installer", "Signé sur cet appareil, avec ton compte.")
                         .appear(0, shown)
 
                     statusBanner
@@ -294,19 +286,6 @@ struct SideloadScreen: View {
                 alignment: .bottom
             )
         }
-    }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text("Installer")
-                .font(PX.Font.display(30, .heavy))
-                .foregroundStyle(PX.Color.ink)
-            Text("Signé sur cet appareil, avec ton compte.")
-                .font(PX.Font.body(13))
-                .foregroundStyle(PX.Color.inkMuted)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.top, PX.Space.tight)
     }
 
     /// Le seul élément qui change de couleur. Il porte l'état à lui seul, ce
