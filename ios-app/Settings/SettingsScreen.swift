@@ -102,6 +102,9 @@ struct SettingsScreen: View {
                     statusBanner
                         .appear(1, shown)
 
+                    if !connection.services.isEmpty {
+                        servicesCard.appear(2, shown)
+                    }
                     buildCard.appear(2, shown)
                     anisetteCard.appear(3, shown)
                     networkCard.appear(4, shown)
@@ -128,6 +131,40 @@ struct SettingsScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, PX.Space.tight)
+    }
+
+    /// Ce que l'appareil annonce, mot pour mot. En mono parce que rien ici n'a
+    /// été reformulé pour l'humain : ce sont les noms de service et les ports
+    /// que RSD a rendus.
+    ///
+    /// Cette carte vivait sur l'écran Jumelage, où elle s'intercalait entre le
+    /// lien établi et l'export du fichier. Sa place est ici : c'est du
+    /// diagnostic, pas une étape.
+    private var servicesCard: some View {
+        VStack(alignment: .leading, spacing: PX.Space.tight) {
+            HStack {
+                SectionLabel("Services RSD")
+                Spacer()
+                Tag("\(connection.services.count)", color: PX.Color.verdant,
+                    icon: "checkmark.circle.fill")
+            }
+
+            ForEach(connection.services.sorted(by: { $0.key < $1.key }), id: \.key) { name, port in
+                HStack(alignment: .top, spacing: PX.Space.tight) {
+                    Text(name)
+                        .font(PX.Font.mono(10.5))
+                        .foregroundStyle(PX.Color.inkMuted)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                    Spacer(minLength: PX.Space.tight)
+                    Text("\(port)")
+                        .font(PX.Font.mono(10.5, .semibold))
+                        .foregroundStyle(PX.Color.inkFaint)
+                }
+            }
+        }
+        .padding(PX.Space.base)
+        .glassCard()
     }
 
     /// Le seul élément coloré, comme sur les trois autres écrans.

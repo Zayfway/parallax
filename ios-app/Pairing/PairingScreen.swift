@@ -349,36 +349,6 @@ struct PairingScreen: View {
         .animation(PX.Motion.settle, value: phase.step)
     }
 
-    /// Ce que l'appareil annonce, mot pour mot. En mono parce que rien ici
-    /// n'a été reformulé pour l'humain : ce sont les noms de service et les
-    /// ports que RSD a rendus.
-    private var servicesCard: some View {
-        VStack(alignment: .leading, spacing: PX.Space.tight) {
-            HStack {
-                SectionLabel("Services RSD")
-                Spacer()
-                Tag("\(connection.services.count)", color: PX.Color.verdant,
-                    icon: "checkmark.circle.fill")
-            }
-
-            ForEach(connection.services.sorted(by: { $0.key < $1.key }), id: \.key) { name, port in
-                HStack(alignment: .top, spacing: PX.Space.tight) {
-                    Text(name)
-                        .font(PX.Font.mono(10.5))
-                        .foregroundStyle(PX.Color.inkMuted)
-                        .lineLimit(1)
-                        .truncationMode(.head)
-                    Spacer(minLength: PX.Space.tight)
-                    Text("\(port)")
-                        .font(PX.Font.mono(10.5, .semibold))
-                        .foregroundStyle(PX.Color.inkFaint)
-                }
-            }
-        }
-        .padding(PX.Space.base)
-        .glassCard()
-    }
-
     /// Le trait qui relie deux étapes. Il se remplit vers le bas : c'est le
     /// seul endroit où la progression est représentée comme un mouvement.
     private func connector(filled: Bool) -> some View {
@@ -428,7 +398,15 @@ struct PairingScreen: View {
 
         case .linked:
             VStack(spacing: PX.Space.tight) {
-                servicesCard
+                // L'export reste l'action principale une fois le lien établi :
+                // c'est le geste qu'on vient chercher ici. Le détail des
+                // services RSD a migré dans les Réglages — c'est du diagnostic,
+                // il n'a rien à faire sur le chemin de l'export.
+                ShareLink(item: PairingStore.fileURL) {
+                    Label("Exporter le fichier", systemImage: "square.and.arrow.up")
+                }
+                .buttonStyle(ProminentButtonStyle())
+
                 Button {
                     connection.releaseTunnel()
                 } label: {

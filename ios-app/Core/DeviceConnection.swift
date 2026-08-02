@@ -136,6 +136,7 @@ final class DeviceConnection: ObservableObject {
 
     enum ConnectionError: LocalizedError {
         case noTunnel
+        case noLink
         case noPairing
         case noService
         case handshakeFailed(String)
@@ -144,6 +145,8 @@ final class DeviceConnection: ObservableObject {
             switch self {
             case .noTunnel:
                 "Ouvre LocalDevVPN (ou StosVPN) et touche Connect. Le lien passe par son tunnel loopback, pas par le Wi-Fi."
+            case .noLink:
+                "Lien avec l'appareil non établi. Il se monte tout seul — réessaie."
             case .noPairing: "Aucun fichier de jumelage. Passe par l'onglet Jumelage."
             case .noService:
                 "Service de jumelage introuvable sur le réseau local. Vérifie que le mode développeur est actif et que l'autorisation Réseau local est accordée dans Réglages › Parallax."
@@ -306,7 +309,7 @@ final class DeviceConnection: ObservableObject {
     /// inutilement coûterait un aller-retour TSS de plusieurs secondes.
     func ensureDDIMounted(progress: @escaping (String) -> Void) async throws {
         guard !ddiVerified else { return }
-        guard let rsd = rsdHandle else { throw ConnectionError.noTunnel }
+        guard let rsd = rsdHandle else { throw ConnectionError.noLink }
 
         let status = px_ddi_is_mounted(rsd)
         if status == PX_OK {

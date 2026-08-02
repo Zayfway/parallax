@@ -21,6 +21,11 @@ struct RootView: View {
     /// l'écran Certificats la partagent, au lieu d'ouvrir deux connexions.
     @StateObject private var account = AppleAccountModel()
 
+    /// Le lancement n'est joué qu'une fois par ouverture, jamais rejoué sur un
+    /// simple retour au premier plan : une animation qu'on revoit trop souvent
+    /// devient une attente.
+    @State private var launching = true
+
     init() {
         let connection = DeviceConnection()
         _connection = StateObject(wrappedValue: connection)
@@ -31,6 +36,18 @@ struct RootView: View {
     private var live: Bool { location.state == .simulating }
 
     var body: some View {
+        ZStack {
+            tabs
+
+            if launching {
+                LaunchView { withAnimation(PX.Motion.settle) { launching = false } }
+                    .transition(.opacity)
+                    .zIndex(1)
+            }
+        }
+    }
+
+    private var tabs: some View {
         TabView {
             SideloadScreen()
                 .tabItem { Label("Installer", systemImage: "square.and.arrow.down") }

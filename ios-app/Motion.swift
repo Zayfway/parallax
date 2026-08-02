@@ -230,3 +230,98 @@ struct StatusBar: View {
         }
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LES MOMENTS
+//
+// Trois instants méritent d'être marqués, et trois seulement : le compte qui
+// s'ouvre, l'app qui se pose, la position qui bascule. Le reste se contente de
+// ne pas sauter — c'est la règle de retenue en tête de fichier, et multiplier
+// les effets est exactement ce qui fait basculer une interface du côté
+// « générée ».
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Sceau qui se dessine, puis se pose.
+///
+/// Utilisé pour un aboutissement — compte connecté, app installée. Le trait
+/// se referme avant que le disque n'apparaisse : on voit la chose *se faire*,
+/// ce qui la rend crédible, là où une coche qui surgit ne raconte rien.
+struct SealMoment: View {
+    let tint: Color
+    let icon: String
+    /// Change de valeur pour rejouer. Un `Bool` ne permettrait pas de rejouer
+    /// deux fois de suite le même aboutissement.
+    let trigger: Int
+
+    @State private var sweep: CGFloat = 0
+    @State private var pop: CGFloat = 0.7
+    @State private var glow: Double = 0
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(tint.opacity(glow * 0.16))
+                .frame(width: 58, height: 58)
+                .blur(radius: 12)
+
+            Circle()
+                .trim(from: 0, to: sweep)
+                .stroke(tint, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                .frame(width: 44, height: 44)
+                .rotationEffect(.degrees(-90))
+
+            Image(systemName: icon)
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(tint)
+                .scaleEffect(pop)
+                .opacity(Double(pop > 0.9 ? 1 : 0))
+        }
+        .onChange(of: trigger) { _, _ in play() }
+        .onAppear { play() }
+    }
+
+    private func play() {
+        sweep = 0; pop = 0.7; glow = 0
+        withAnimation(.easeOut(duration: 0.42)) { sweep = 1 }
+        withAnimation(PX.Motion.acquire.delay(0.30)) { pop = 1 }
+        withAnimation(PX.Motion.settle.delay(0.30)) { glow = 1 }
+    }
+}
+
+/// Onde unique qui traverse une carte, de gauche à droite.
+///
+/// Marque une transition franchie sans rien ajouter à l'écran : la lueur passe
+/// et disparaît. À réserver aux aboutissements, sous peine de devenir du décor.
+struct SweepHighlight: ViewModifier {
+    let tint: Color
+    let trigger: Int
+
+    @State private var position: CGFloat = -1
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(
+                GeometryReader { geometry in
+                    LinearGradient(
+                        colors: [.clear, tint.opacity(0.22), .clear],
+                        startPoint: .leading, endPoint: .trailing
+                    )
+                    .frame(width: geometry.size.width * 0.55)
+                    .offset(x: position * geometry.size.width * 1.6)
+                    .allowsHitTesting(false)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: PX.Radius.card, style: .continuous))
+            )
+            .onChange(of: trigger) { _, _ in
+                position = -1
+                withAnimation(.easeInOut(duration: 0.85)) { position = 1 }
+            }
+    }
+}
+
+extension View {
+    /// Une onde traverse la vue quand `trigger` change.
+    func sweep(_ tint: Color, trigger: Int) -> some View {
+        modifier(SweepHighlight(tint: tint, trigger: trigger))
+    }
+}

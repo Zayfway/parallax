@@ -42,6 +42,8 @@ struct SideloadScreen: View {
     @State private var progress: InstallProgress?
     @State private var failure: String?
     @State private var installed: String?
+    /// Incrémenté à chaque aboutissement, pour rejouer le sceau.
+    @State private var doneCount = 0
     /// Permet de corriger une adresse devenue fausse sans reconstruire l'app.
     @AppStorage("ipaSourceOverride") private var sourceOverride: String = ""
 
@@ -166,6 +168,7 @@ struct SideloadScreen: View {
 
                     statusBanner
                         .appear(1, shown)
+                        .sweep(PX.Color.verdant, trigger: doneCount)
 
                     rail
                         .appear(2, shown)
@@ -242,13 +245,21 @@ struct SideloadScreen: View {
     private var statusBanner: some View {
         HStack(spacing: PX.Space.snug) {
             ZStack {
-                Circle()
-                    .fill(phase.tint.opacity(0.16))
-                    .frame(width: 42, height: 42)
-                Image(systemName: phase.icon)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(phase.tint)
+                if case .done = phase {
+                    SealMoment(tint: PX.Color.verdant,
+                               icon: "checkmark.seal.fill",
+                               trigger: doneCount)
+                } else {
+                    Circle()
+                        .fill(phase.tint.opacity(0.16))
+                        .frame(width: 42, height: 42)
+                    Image(systemName: phase.icon)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(phase.tint)
+                }
             }
+            .frame(width: 58, height: 58)
+            .sensoryFeedback(.success, trigger: doneCount)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(phase.label)
@@ -459,6 +470,7 @@ struct SideloadScreen: View {
                 )
             }
             installed = special.isEmpty ? target.rawValue : special
+            doneCount += 1
             LogBridge.shared.note("installation terminée : \(installed ?? "")")
         } catch {
             failure = error.localizedDescription

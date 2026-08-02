@@ -149,6 +149,18 @@ final class LocationEngine: ObservableObject {
     // MARK: - Boucle supervisée
 
     private func openAndRun() async {
+        // Monter le lien AVANT tout le reste. L'écran Carte ne le faisait pas,
+        // contrairement à l'écran Installer : si le tunnel avait été fermé
+        // entre-temps, `ensureDDIMounted` levait une erreur qui accusait le VPN
+        // — alors que le VPN allait très bien et qu'il ne manquait que le lien.
+        state = .connecting
+        do {
+            try await connection.connect()
+        } catch {
+            state = .failed(error.localizedDescription)
+            return
+        }
+
         state = .mountingDDI
 
         // Gate DDI en premier. Sans ça, l'échec DVT remonte une erreur opaque et

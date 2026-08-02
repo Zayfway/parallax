@@ -45,6 +45,8 @@ final class AppleAccountModel: ObservableObject {
     /// Numéro de série en cours de révocation, pour n'immobiliser que sa carte.
     @Published private(set) var revoking: String?
     @Published private(set) var isCreatingCertificate = false
+    /// Incrémenté à chaque connexion réussie, pour rejouer le sceau.
+    @Published private(set) var connectCount = 0
 
     /// Emplacements déclarés par Apple, quand il les déclare. Tous les
     /// certificats d'un même type portent la même valeur ; on prend le maximum
@@ -126,6 +128,7 @@ final class AppleAccountModel: ObservableObject {
         if let previous = session { px_sign_session_free(previous) }
         session = handle
 
+        connectCount += 1
         withAnimation(PX.Motion.acquire) { phase = .connected(account) }
         password = ""
         certificates = .idle
@@ -315,6 +318,7 @@ struct AppleAccountCard: View {
         }
         .padding(PX.Space.base)
         .glassCard(emphasis: true)
+        .sweep(PX.Color.verdant, trigger: model.connectCount)
         .animation(PX.Motion.settle, value: model.phase)
         .animation(PX.Motion.settle, value: model.failure)
         .onAppear { shown = true }
@@ -383,9 +387,11 @@ struct AppleAccountCard: View {
 
     private func connected(_ account: String) -> some View {
         HStack(spacing: PX.Space.snug) {
-            Image(systemName: "checkmark.seal.fill")
-                .font(.system(size: 26))
-                .foregroundStyle(PX.Color.verdant)
+            SealMoment(tint: PX.Color.verdant,
+                       icon: "checkmark.seal.fill",
+                       trigger: model.connectCount)
+                .frame(width: 58, height: 58)
+                .sensoryFeedback(.success, trigger: model.connectCount)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(account)
