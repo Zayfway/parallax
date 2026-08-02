@@ -209,9 +209,12 @@ struct ProminentButtonStyle: ButtonStyle {
             .font(PX.Font.display(17, .semibold))
             .foregroundStyle(enabled ? Color.white : PX.Color.inkFaint)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 17)
+            .padding(.vertical, 18)
+            // Capsule pleine : la forme d'action franche d'iOS (App Store, Feather).
+            // Un bouton entièrement arrondi se lit comme « appuie ici » sans un
+            // mot, et distingue l'action principale de tout ce qui l'entoure.
             .background(
-                RoundedRectangle(cornerRadius: PX.Radius.control, style: .continuous)
+                Capsule(style: .continuous)
                     .fill(enabled
                           ? LinearGradient(colors: [tint, tint.opacity(0.76)],
                                            startPoint: .top, endPoint: .bottom)
@@ -219,10 +222,10 @@ struct ProminentButtonStyle: ButtonStyle {
                                            startPoint: .top, endPoint: .bottom))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: PX.Radius.control, style: .continuous)
+                Capsule(style: .continuous)
                     .strokeBorder(.white.opacity(enabled ? 0.22 : 0.04), lineWidth: 0.9)
             )
-            .shadow(color: enabled ? tint.opacity(0.38) : .clear, radius: 18, y: 7)
+            .shadow(color: enabled ? tint.opacity(0.40) : .clear, radius: 20, y: 8)
             .scaleEffect(configuration.isPressed ? 0.972 : 1)
             .animation(PX.Motion.tap, value: configuration.isPressed)
             // Retour haptique au relâchement : le geste se termine dans la main
@@ -240,16 +243,18 @@ struct SecondaryButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(PX.Font.display(14, .medium))
+            .font(PX.Font.display(14, .semibold))
             .foregroundStyle(tint)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
+            .padding(.vertical, 13)
+            // Capsule elle aussi, pour rimer avec le bouton principal — même
+            // famille de forme, poids moindre.
             .background(
-                RoundedRectangle(cornerRadius: PX.Radius.control, style: .continuous)
+                Capsule(style: .continuous)
                     .fill(.white.opacity(configuration.isPressed ? 0.10 : 0.05))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: PX.Radius.control, style: .continuous)
+                Capsule(style: .continuous)
                     .strokeBorder(PX.Color.horizon, lineWidth: 1)
             )
             .scaleEffect(configuration.isPressed ? 0.98 : 1)

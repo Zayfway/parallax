@@ -173,10 +173,10 @@ struct MapScreen: View {
                 }
             }
             .mapStyle(style.mapStyle)
-            .mapControls {
-                MapUserLocationButton()
-                MapCompass()
-            }
+            // Pas de `.mapControls` : les boutons système se calent dans le coin
+            // haut-droit de la carte, et comme elle déborde sous la barre d'état
+            // (ignoresSafeArea .top), ils venaient chevaucher l'heure et la
+            // batterie. On recentre depuis la barre d'outils, en zone sûre.
             .onTapGesture { point in
                 guard let coordinate = proxy.convert(point, from: .local) else { return }
                 // Deux intentions, deux comportements : en mode trajet on pose
@@ -508,6 +508,15 @@ struct MapScreen: View {
 
             Button { showingSearch = true } label: { toolbarIcon("magnifyingglass") }
                 .buttonStyle(.plain)
+
+            // Recentrer sur la position réelle de l'appareil. Remplace le bouton
+            // système de MapKit, qui débordait sous la barre d'état.
+            Button {
+                withAnimation(PX.Motion.settle) {
+                    camera = .userLocation(fallback: .automatic)
+                }
+            } label: { toolbarIcon("location.fill") }
+            .buttonStyle(.plain)
 
             // Un trajet part de la position simulée : le bouton n'apparaît
             // qu'une fois un point posé.

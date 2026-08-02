@@ -281,6 +281,10 @@ struct CertificatesScreen: View {
                 badge(for: certificate)
             }
 
+            // Pastille de validité, façon Feather : le compte à rebours en clair,
+            // sur toute la largeur. C'est l'info qu'on cherche d'abord.
+            validityPill(certificate)
+
             VStack(alignment: .leading, spacing: 3) {
                 if !certificate.serialNumber.isEmpty {
                     Row("Série", certificate.serialNumber, mono: true)
@@ -331,6 +335,40 @@ struct CertificatesScreen: View {
     private func expiryText(_ certificate: FFI.Certificate) -> String {
         guard let expiry = certificate.expiry else { return "date inconnue" }
         return expiry.formatted(date: .abbreviated, time: .omitted)
+    }
+
+    /// Pastille de validité pleine largeur, inspirée de Feather : le nombre de
+    /// jours restants, lisible d'un coup d'œil. Vert tant que le certificat
+    /// signe, rouge dès qu'il ne signe plus. Jamais d'ambre — elle est réservée
+    /// à la position simulée.
+    @ViewBuilder
+    private func validityPill(_ certificate: FFI.Certificate) -> some View {
+        let dead = certificate.isRevoked || certificate.isExpired
+        let tint = dead ? PX.Color.alert : PX.Color.verdant
+        HStack(spacing: 6) {
+            Image(systemName: certificate.isRevoked ? "xmark.seal.fill"
+                  : certificate.isExpired ? "clock.badge.exclamationmark.fill"
+                  : "clock.fill")
+                .font(.system(size: 11, weight: .semibold))
+            Text(validityText(certificate))
+                .font(PX.Font.display(12.5, .semibold))
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(tint)
+        .padding(.horizontal, PX.Space.snug)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity)
+        .background(Capsule(style: .continuous).fill(tint.opacity(0.14)))
+        .overlay(Capsule(style: .continuous).strokeBorder(tint.opacity(0.28), lineWidth: 1))
+    }
+
+    private func validityText(_ certificate: FFI.Certificate) -> String {
+        if certificate.isRevoked { return "Révoqué" }
+        guard let expiry = certificate.expiry else { return "Expiration inconnue" }
+        let days = Calendar.current.dateComponents([.day], from: Date(), to: expiry).day ?? 0
+        if days < 0 { return "Expiré" }
+        if days == 0 { return "Expire aujourd'hui" }
+        return days == 1 ? "1 jour restant" : "\(days) jours restants"
     }
 
     // MARK: - Confirmation
