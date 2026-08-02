@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ONGLET INSTALLER
@@ -52,15 +53,25 @@ struct SideloadScreen: View {
     /// Permet de corriger une adresse devenue fausse sans reconstruire l'app.
     @AppStorage("ipaSourceOverride") private var sourceOverride: String = ""
 
+    // ── Cible « Autre IPA » ────────────────────────────────────────────────
+    /// IPA importé depuis Fichiers, déjà copié en zone temporaire (l'accès
+    /// sécurisé ne dure pas au-delà du callback, d'où la copie immédiate).
+    @State private var customIPA: URL?
+    @State private var customName = ""
+    @State private var customURLText = ""
+    @State private var showingIPAImporter = false
+
     enum InstallTarget: String, CaseIterable {
         case sideStore = "SideStore"
         case liveContainer = "LiveContainer"
+        /// N'importe quel IPA fourni par l'utilisateur — fichier ou URL. Signé
+        /// avec son propre compte, comme le reste : aucun cert partagé.
+        case custom = "Autre IPA"
 
         /// SideStore publie un build stable et un nightly. LiveContainer est une
         /// app compagnon distincte (dépôt LiveContainer/LiveContainer), avec un
-        /// seul canal — d'où l'URL fixe. L'ancien `SideStore-LiveContainer.ipa`
-        /// n'existe plus dans les releases SideStore (404) : on installe donc
-        /// LiveContainer comme sa propre app, ce qui est la réalité aujourd'hui.
+        /// seul canal — d'où l'URL fixe. `custom` n'a pas d'URL prédéfinie :
+        /// elle vient de l'import ou du champ, gérée à part.
         /// C'est Rust qui confirmera le `SpecialApp` détecté dans l'IPA signé.
         func url(for channel: Channel) -> String {
             switch self {
@@ -73,11 +84,12 @@ struct SideloadScreen: View {
                 }
             case .liveContainer:
                 "https://github.com/LiveContainer/LiveContainer/releases/latest/download/LiveContainer.ipa"
+            case .custom:
+                ""
             }
         }
 
-        /// LiveContainer n'a pas de canaux : cacher le sélecteur évite de laisser
-        /// croire qu'il change quelque chose.
+        /// Seul SideStore a des canaux (stable/nightly).
         var hasChannels: Bool { self == .sideStore }
 
         var blurb: String {
@@ -86,6 +98,8 @@ struct SideloadScreen: View {
                 "Le magasin : installe et re-signe tes apps tout seul, tous les sept jours."
             case .liveContainer:
                 "Le conteneur : exécute d'autres apps sans consommer d'emplacement de signature. À poser après SideStore."
+            case .custom:
+                "N'importe quel IPA : importe un fichier ou colle une URL. Signé avec ton compte, installé sur ton appareil."
             }
         }
     }
@@ -238,6 +252,32 @@ struct SideloadScreen: View {
         .onReceive(log.$lines) { lines in
             guard installing, let last = lines.last else { return }
             absorb(last)
+        }
+        .fileImporter(
+            isPresented: $showingIPAImporter,
+            allowedContentTypes: [UTType(filenameExtension: "ipa") ?? .data]
+        ) { result in
+            do {
+                let src = try result.get()
+                guard src.startAccessingSecurityScopedResource() else {
+                    failure = "Accès au fichier refusé."
+                    return
+                }
+                defer { src.stopAccessingSecurityScopedResource() }
+                // L'accès sécurisé ne survit pas à ce callback : on copie tout de
+                // suite en zone temporaire, c'est cette copie qu'on signera.
+                let dest = URL.temporaryDirectory.appending(path: src.lastPathComponent)
+                try? FileManager.default.removeItem(at: dest)
+                try FileManager.default.copyItem(at: src, to: dest)
+                withAnimation(PX.Motion.settle) {
+                    customIPA = dest
+                    customName = src.lastPathComponent
+                    customURLText = ""
+                    failure = nil
+                }
+            } catch {
+                failure = error.localizedDescription
+            }
         }
         .safeAreaInset(edge: .bottom) {
             Button {
@@ -528,6 +568,30 @@ struct SideloadScreen: View {
                 SegmentedRow(selection: $channel, options: Channel.allCases) { $0.rawValue }
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
+
+            if target == .custom {
+                VStack(alignment: .leading, spacing: PX.Space.tight) {
+                    Button { showingIPAImporter = true } label: {
+                        Label(customName.isEmpty ? "Choisir un fichier .ipa" : customName,
+                              systemImage: customName.isEmpty ? "folder" : "doc.fill")
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+
+                    Text("ou colle une URL directe vers un .ipa")
+                        .font(PX.Font.body(11.5))
+                        .foregroundStyle(PX.Color.inkFaint)
+
+                    TextField("", text: $customURLText)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+                        .field("URL de l'IPA", mono: true)
+                        .onChange(of: customURLText) { _, value in
+                            if !value.isEmpty { customIPA = nil; customName = "" }
+                        }
+                }
+                .transition(.opacity)
+            }
         }
         .padding(PX.Space.base)
         .glassCard()
@@ -537,12 +601,18 @@ struct SideloadScreen: View {
     private var actionLabel: String {
         switch phase {
         case .working(let percent, _): "Installation… \(percent) %"
-        case .done:                    "Réinstaller \(target.rawValue)"
+        case .done:                    target == .custom ? "Réinstaller" : "Réinstaller \(target.rawValue)"
         case .needsAccount:            "Connecte ton compte Apple"
         case .needsPairing:            "Jumelage requis"
         case .needsLink:               "Établis le lien"
-        default:                       "Installer \(target.rawValue)"
+        default:                       target == .custom ? "Installer l'IPA" : "Installer \(target.rawValue)"
         }
+    }
+
+    /// Nom affiché après installation quand Rust ne détecte pas d'app spéciale.
+    private var installedLabel: String {
+        if target == .custom { return customName.isEmpty ? "l'application" : customName }
+        return target.rawValue
     }
 
     /// Les trois conditions réelles, dans l'ordre où l'utilisateur les remplit :
@@ -550,7 +620,12 @@ struct SideloadScreen: View {
     /// de mot de passe locaux ne conditionnent plus rien — la session vient du
     /// modèle partagé.
     private var canInstall: Bool {
-        account.isConnected && connection.tunnelPointer != nil && !installing
+        guard account.isConnected, connection.tunnelPointer != nil, !installing else { return false }
+        if target == .custom {
+            return customIPA != nil
+                || !customURLText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        return true
     }
 
     /// Enchaîne le tout : le lien doit être vivant, le compte connecté, et
@@ -582,14 +657,14 @@ struct SideloadScreen: View {
                 return
             }
 
-            let ipa = try await download(target: target, channel: channel)
+            let ipa = try await resolveIPA()
             let special = try await onBackground {
                 try FFI.installIPA(
                     session: session, tunnel: tunnel,
                     ipaPath: ipa.path, device: device
                 )
             }
-            installed = special.isEmpty ? target.rawValue : special
+            installed = special.isEmpty ? installedLabel : special
             doneCount += 1
             LogBridge.shared.note("installation terminée : \(installed ?? "")")
         } catch {
@@ -597,29 +672,37 @@ struct SideloadScreen: View {
         }
     }
 
-    /// Récupère l'IPA à installer.
-    ///
-    /// ⚠️ Ces adresses sont les URL publiques usuelles des projets concernés ;
-    /// je ne les ai pas vérifiées contre un téléchargement réel. Si l'une
-    /// change, elle est surchargeable dans les Réglages plutôt que de figer une
-    /// valeur fausse dans le binaire.
-    private func download(target: InstallTarget, channel: Channel) async throws -> URL {
-        let source = sourceOverride.isEmpty ? target.url(for: channel) : sourceOverride
-        guard let url = URL(string: source) else {
-            throw InstallError.badSource(source)
+    /// Résout l'IPA à installer, quelle que soit la cible :
+    /// - `custom` : le fichier importé (déjà local) ou l'URL collée ;
+    /// - SideStore / LiveContainer : l'URL du projet (ou la surcharge Réglages).
+    private func resolveIPA() async throws -> URL {
+        if target == .custom {
+            if let local = customIPA { return local }
+            let text = customURLText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let url = URL(string: text), url.scheme?.hasPrefix("http") == true else {
+                throw InstallError.badSource(text.isEmpty ? "aucun fichier ni URL" : text)
+            }
+            return try await downloadURL(url, name: "custom")
         }
 
-        progress = InstallProgress(percent: 0, label: "Téléchargement de \(target.rawValue)")
+        let source = sourceOverride.isEmpty ? target.url(for: channel) : sourceOverride
+        guard let url = URL(string: source) else { throw InstallError.badSource(source) }
+        return try await downloadURL(url, name: "\(target.rawValue)-\(channel.rawValue)")
+    }
+
+    /// Télécharge une URL vers un fichier local stable (URLSession efface son
+    /// temporaire à la sortie du scope, donc on le déplace avant de le confier
+    /// à Rust). Le nom est assaini pour ne pas casser le chemin.
+    private func downloadURL(_ url: URL, name: String) async throws -> URL {
+        progress = InstallProgress(percent: 0, label: "Téléchargement…")
         let (temporary, response) = try await URLSession.shared.download(from: url)
 
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            throw InstallError.download(http.statusCode, source)
+            throw InstallError.download(http.statusCode, url.absoluteString)
         }
 
-        // URLSession supprime son fichier temporaire à la sortie du scope ;
-        // on le déplace sous un nom stable avant de le confier à Rust.
-        let destination = URL.temporaryDirectory
-            .appending(path: "\(target.rawValue)-\(channel.rawValue).ipa")
+        let safe = name.replacingOccurrences(of: "/", with: "-")
+        let destination = URL.temporaryDirectory.appending(path: "\(safe).ipa")
         try? FileManager.default.removeItem(at: destination)
         try FileManager.default.moveItem(at: temporary, to: destination)
         return destination
