@@ -104,13 +104,25 @@ jobs:
           path: build/Parallax.ipa
           retention-days: 30
 
-      # Sur tag, publie une release : un artefact de run ordinaire exige d'être
-      # connecté à GitHub pour être téléchargé, ce qui est pénible depuis un
-      # iPhone. Une release donne un lien direct.
+      - name: Version depuis project.yml
+        id: ver
+        run: |
+          V=$(grep MARKETING_VERSION project.yml | head -1 | sed -E 's/.*"([0-9.]+)".*/\1/')
+          echo "tag=v$V" >> "$GITHUB_OUTPUT"
+          echo "Version : v$V"
+
+      # Publie une release téléchargeable directement : un artefact de run exige
+      # d'être connecté à GitHub, pénible depuis un iPhone ; une release donne un
+      # lien public. Sur push main on rafraîchit la release v<MARKETING_VERSION>
+      # (le proxy git de l'agent bloque le push de tags, donc c'est la CI qui la
+      # crée avec son propre token) ; sur tag poussé, on respecte le tag.
       - name: Publier la release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || steps.ver.outputs.tag }}
+          name: Parallax ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || steps.ver.outputs.tag }}
+          make_latest: true
           files: build/Parallax.ipa
           body: |
             IPA **non signé**. Installe-le via SideStore, AltStore ou Feather —

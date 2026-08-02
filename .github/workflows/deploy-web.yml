@@ -27,6 +27,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+        # Active Pages automatiquement au premier déploiement, au lieu d'exiger
+        # un basculement manuel dans Réglages › Pages (source de l'échec
+        # « Get Pages site failed »). Le token a déjà `pages: write`.
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: web
