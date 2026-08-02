@@ -83,6 +83,13 @@ final class PairingController: NSObject, ObservableObject {
         }
     }
 
+    /// Relit la présence du fichier. Appelé après un import : le jumelage
+    /// n'est pas passé par nous, donc rien n'aurait mis `hasFile` à jour.
+    func refreshFileState() {
+        hasFile = PairingStore.exists
+        lastError = nil
+    }
+
     // MARK: - Observation des callbacks natifs
 
     func observePIN() {

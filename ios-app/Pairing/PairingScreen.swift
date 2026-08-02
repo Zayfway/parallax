@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ONGLET JUMELAGE
@@ -36,6 +37,12 @@ struct PairingScreen: View {
     @State private var shown = false
     @State private var isLinking = false
     @State private var linkError: String?
+
+    // ── Chemin de repli, pour les iOS sans « Jumeler avec » ───────────────
+    @State private var importing = false
+    @State private var identitySheet = false
+    @State private var udidField = ""
+    @State private var deviceNameField = "iPhone"
 
     // MARK: - Phase
 
@@ -165,6 +172,9 @@ struct PairingScreen: View {
                         errorCard(message)
                             .transition(.move(edge: .top).combined(with: .opacity))
                     }
+
+                    fallbackCard
+                        .appear(5, shown)
                 }
                 .padding(.horizontal, PX.Space.base)
                 .padding(.bottom, 110)
@@ -178,6 +188,141 @@ struct PairingScreen: View {
         .animation(PX.Motion.settle, value: isLinking)
         .animation(PX.Motion.settle, value: linkError)
         .onAppear { shown = true }
+        .fileImporter(
+            isPresented: $importing,
+            allowedContentTypes: [
+                UTType(filenameExtension: "plist") ?? .propertyList,
+                UTType(filenameExtension: "mobiledevicepairing") ?? .data,
+                .data,
+            ]
+        ) { result in
+            switch result {
+            case .success(let url):
+                do {
+                    try PairingStore.importFile(at: url)
+                    pairing.refreshFileState()
+                    LogBridge.shared.note("fichier de jumelage importé")
+                    withAnimation(PX.Motion.acquire) { linkError = nil }
+                } catch {
+                    withAnimation(PX.Motion.settle) { linkError = error.localizedDescription }
+                }
+            case .failure(let error):
+                withAnimation(PX.Motion.settle) { linkError = error.localizedDescription }
+            }
+        }
+        .sheet(isPresented: $identitySheet) {
+            identityForm
+                .presentationDetents([.height(400)])
+                .presentationBackground(PX.Color.abyss)
+        }
+    }
+
+    // MARK: - Repli pour les iOS plus anciens
+
+    /// « Jumeler avec Parallax » n'apparaît dans Réglages qu'à partir d'iOS 26.
+    /// En dessous, le protocole RPPairing fonctionne — il date d'iOS 17.4 —
+    /// mais rien ne permet de le déclencher depuis l'appareil. Le fichier doit
+    /// donc être créé une fois sur un ordinateur, puis importé ici.
+    ///
+    /// Ce chemin sert aussi de reprise après une réinstallation, quand la copie
+    /// en Trousseau n'a pas suivi.
+    private var fallbackCard: some View {
+        VStack(alignment: .leading, spacing: PX.Space.snug) {
+            SectionLabel("Sans « Jumeler avec »")
+
+            Text("Sur les versions d'iOS où l'entrée n'existe pas dans Réglages, crée le fichier une fois sur un ordinateur avec `idevice_pair` en mode RPPairing, puis importe-le ici.")
+                .font(PX.Font.body(12.5))
+                .foregroundStyle(PX.Color.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button {
+                importing = true
+            } label: {
+                Label("Importer un fichier", systemImage: "square.and.arrow.down")
+            }
+            .buttonStyle(SecondaryButtonStyle())
+
+            if pairing.hasFile {
+                Divider().overlay(PX.Color.horizon)
+
+                HStack(alignment: .top, spacing: PX.Space.tight) {
+                    Image(systemName: identity == nil ? "exclamationmark.circle" : "checkmark.circle")
+                        .font(.system(size: 13))
+                        .foregroundStyle(identity == nil ? PX.Color.alert : PX.Color.verdant)
+                        .padding(.top, 2)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(identity == nil ? "Identité de l'appareil inconnue" : "Identité connue")
+                            .font(PX.Font.display(13, .semibold))
+                            .foregroundStyle(PX.Color.ink)
+                        Text(identity.map { "\($0.name) · \($0.udid)" }
+                             ?? "Sans UDID, la signature échoue chez Apple avec l'erreur 8220. Un fichier importé ne le contient pas.")
+                            .font(identity == nil ? PX.Font.body(12) : PX.Font.mono(10.5))
+                            .foregroundStyle(PX.Color.inkMuted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                }
+
+                Button {
+                    udidField = identity?.udid ?? ""
+                    deviceNameField = identity?.name ?? "iPhone"
+                    identitySheet = true
+                } label: {
+                    Label(identity == nil ? "Saisir l'UDID" : "Modifier l'identité",
+                          systemImage: "pencil")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+            }
+        }
+        .padding(PX.Space.base)
+        .glassCard()
+    }
+
+    private var identity: FFI.PairedDevice? {
+        FFI.pairedDevice(besidePairingFile: PairingStore.fileURL)
+    }
+
+    private var identityForm: some View {
+        VStack(spacing: PX.Space.loose) {
+            VStack(spacing: PX.Space.tight) {
+                Image(systemName: "iphone.gen3")
+                    .font(.system(size: 32))
+                    .foregroundStyle(PX.Color.azimuth)
+                Text("Identité de l'appareil")
+                    .font(PX.Font.display(20, .semibold))
+                    .foregroundStyle(PX.Color.ink)
+                Text("L'UDID se lit dans Réglages › Général › Informations, ou dans le Finder quand l'appareil est branché.")
+                    .font(PX.Font.body(12.5))
+                    .foregroundStyle(PX.Color.inkMuted)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(spacing: PX.Space.snug) {
+                TextField("", text: $udidField)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .field("UDID", mono: true)
+
+                TextField("", text: $deviceNameField)
+                    .field("Nom de l'appareil")
+            }
+
+            Button("Enregistrer") {
+                try? PairingStore.saveIdentity(
+                    udid: udidField.trimmingCharacters(in: .whitespacesAndNewlines),
+                    name: deviceNameField, model: "iPhone"
+                )
+                identitySheet = false
+                LogBridge.shared.note("identité de l'appareil enregistrée à la main")
+            }
+            .buttonStyle(ProminentButtonStyle(enabled: udidField.count >= 20))
+            .disabled(udidField.count < 20)
+        }
+        .padding(PX.Space.loose)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(PX.Color.canvas)
     }
 
     // MARK: - Titre
@@ -290,7 +435,7 @@ struct PairingScreen: View {
                 .padding(.bottom, PX.Space.snug)
 
             step(1, "Lancer la diffusion",
-                 "Parallax s'annonce sur le réseau local.")
+                 "Parallax s'annonce sur le réseau local. Si ton iOS n'a pas « Jumeler avec », importe plutôt un fichier créé sur ordinateur.")
             connector(filled: phase.step >= 2)
             step(2, "Réglages › Confidentialité et sécurité › Mode développeur",
                  "Touche « Pair with Parallax » sous Autres appareils.")

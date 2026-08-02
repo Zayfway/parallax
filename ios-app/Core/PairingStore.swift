@@ -46,7 +46,43 @@ enum PairingStore {
         return backup
     }
 
+    /// Identité de l'appareil, écrite par Rust au moment du jumelage — ou
+    /// saisie à la main quand le fichier a été importé depuis un ordinateur.
+    ///
+    /// Un fichier importé ne porte **pas** l'UDID : le `RpPairingFile` ne
+    /// contient que des clés et un identifiant d'hôte. Sans lui, la signature
+    /// échoue chez Apple avec l'erreur 8220 — d'où la saisie manuelle, qui est
+    /// le seul chemin possible sur les versions d'iOS où le jumelage sans
+    /// ordinateur n'existe pas.
+    static var peerURL: URL {
+        URL(fileURLWithPath: fileURL.path + ".peer.json")
+    }
+
+    static func saveIdentity(udid: String, name: String, model: String) throws {
+        let escape = { (s: String) in
+            s.replacingOccurrences(of: "\\", with: "\\\\")
+             .replacingOccurrences(of: "\"", with: "\\\"")
+        }
+        let json = #"{"udid":"\#(escape(udid))","name":"\#(escape(name))","model":"\#(escape(model))"}"#
+        try Data(json.utf8).write(to: peerURL, options: .atomic)
+    }
+
+    /// Importe un fichier fourni par l'utilisateur.
+    ///
+    /// Le format n'est pas vérifié ici : c'est Rust qui tranchera au montage du
+    /// lien, et il le dira mieux que nous. On refuse seulement le vide, qui est
+    /// le cas fréquent d'un export interrompu.
+    static func importFile(at source: URL) throws {
+        let scoped = source.startAccessingSecurityScopedResource()
+        defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+
+        let data = try Data(contentsOf: source)
+        guard !data.isEmpty else { throw StoreError.empty }
+        try save(data)
+    }
+
     static func clear() {
+        try? FileManager.default.removeItem(at: peerURL)
         try? FileManager.default.removeItem(at: fileURL)
         SecItemDelete([
             kSecClass: kSecClassGenericPassword,
