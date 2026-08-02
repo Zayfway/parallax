@@ -59,13 +59,20 @@ struct SideloadScreen: View {
     @State private var customIPA: URL?
     @State private var customName = ""
     @State private var customURLText = ""
-    /// Tweaks (.dylib) à injecter dans l'IPA « Autre » avant signature.
+    /// Tweaks (.dylib/.deb) à injecter dans l'IPA « Autre » avant signature.
     @State private var tweaks: [URL] = []
-    /// Un seul fileImporter partagé — deux `.fileImporter` sur une même vue
-    /// entrent en conflit dans SwiftUI. On mémorise ce qu'on importe.
-    private enum ImportKind { case ipa, dylib }
+    /// Frameworks & extensions (.dylib/.deb) à embarquer — même mécanique
+    /// d'injection, liste séparée pour coller à l'organisation de Feather.
+    @State private var frameworks: [URL] = []
+    /// Un seul sélecteur partagé ; on mémorise ce qu'on importe.
+    private enum ImportKind { case ipa, tweak, framework }
     @State private var importKind: ImportKind = .ipa
     @State private var showingImporter = false
+    /// Section « Avancé » façon Feather : le groupe Modify et ses sous-listes se
+    /// déplient à la demande.
+    @State private var modifyOpen = true
+    @State private var tweaksOpen = false
+    @State private var frameworksOpen = false
 
     enum InstallTarget: String, CaseIterable {
         case sideStore = "SideStore"
@@ -261,10 +268,10 @@ struct SideloadScreen: View {
             DocumentPicker(
                 contentTypes: importKind == .ipa
                     ? [UTType(filenameExtension: "ipa") ?? .data]
-                    // Tweaks : .dylib (palier 1) et .deb (palier 2/3).
+                    // Tweaks & frameworks : .dylib (palier 1) et .deb (palier 2/3).
                     : [UTType(filenameExtension: "dylib"),
                        UTType(filenameExtension: "deb")].compactMap { $0 } + [.data],
-                allowsMultiple: importKind == .dylib
+                allowsMultiple: importKind != .ipa
             ) { urls in
                 handlePicked(urls)
             }
@@ -543,64 +550,222 @@ struct SideloadScreen: View {
             }
 
             if target == .custom {
-                VStack(alignment: .leading, spacing: PX.Space.tight) {
-                    Button { importKind = .ipa; showingImporter = true } label: {
-                        Label(customName.isEmpty ? "Choisir un fichier .ipa" : customName,
-                              systemImage: customName.isEmpty ? "folder" : "doc.fill")
-                    }
-                    .buttonStyle(SecondaryButtonStyle())
-
-                    Text("ou colle une URL directe vers un .ipa")
-                        .font(PX.Font.body(11.5))
-                        .foregroundStyle(PX.Color.inkFaint)
-
-                    TextField("", text: $customURLText)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .keyboardType(.URL)
-                        .field("URL de l'IPA", mono: true)
-                        .onChange(of: customURLText) { _, value in
-                            if !value.isEmpty { customIPA = nil; customName = "" }
-                        }
-
-                    Divider().overlay(PX.Color.horizon).padding(.vertical, 2)
-
-                    SectionLabel("Tweaks (.dylib)")
-                    ForEach(tweaks, id: \.self) { url in
-                        HStack(spacing: PX.Space.tight) {
-                            Image(systemName: "puzzlepiece.extension.fill")
-                                .font(.system(size: 12))
-                                .foregroundStyle(PX.Color.azimuth)
-                            Text(url.lastPathComponent)
-                                .font(PX.Font.mono(11))
-                                .foregroundStyle(PX.Color.inkMuted)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                            Spacer(minLength: 0)
-                            Button { tweaks.removeAll { $0 == url } } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(PX.Color.inkFaint)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    Button { importKind = .dylib; showingImporter = true } label: {
-                        Label("Ajouter un tweak (.dylib ou .deb)", systemImage: "plus")
-                    }
-                    .buttonStyle(SecondaryButtonStyle())
-
-                    Text("Injecté dans l'app avant signature. .dylib autonome, ou .deb complet : la Substrate est réécrite vers ElleKit et les dépendances sont embarquées. Si un tweak dépend de la Substrate, ajoute aussi ElleKit — son .deb suffit, il est détecté automatiquement.")
-                        .font(PX.Font.body(11))
-                        .foregroundStyle(PX.Color.inkFaint)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .transition(.opacity)
+                customSection
+                    .transition(.opacity)
             }
         }
         .padding(PX.Space.base)
         .glassCard()
         .animation(PX.Motion.settle, value: target)
+        .animation(PX.Motion.settle, value: modifyOpen)
+        .animation(PX.Motion.settle, value: tweaksOpen)
+        .animation(PX.Motion.settle, value: frameworksOpen)
+    }
+
+    // MARK: - Section « Autre IPA » façon Feather
+
+    /// Source (fichier/URL) puis une section **Avancé** en listes groupées, dans
+    /// l'esprit de Feather : un groupe *Modify* pliable qui range les paliers
+    /// d'injection — Tweaks, Frameworks & extensions — et rappelle que les
+    /// dylibs déjà présents sont conservés.
+    private var customSection: some View {
+        VStack(alignment: .leading, spacing: PX.Space.base) {
+            // ── Source ──
+            insetGroup {
+                Button { importKind = .ipa; showingImporter = true } label: {
+                    row(icon: customName.isEmpty ? "folder.fill" : "doc.fill",
+                        title: customName.isEmpty ? "Choisir un fichier .ipa" : customName,
+                        subtitle: customName.isEmpty ? "depuis Fichiers" : "sélectionné",
+                        trailing: chevron(open: false))
+                }
+                .buttonStyle(.plain)
+
+                rowDivider
+
+                HStack(spacing: PX.Space.snug) {
+                    IconTile(system: "link", size: 32)
+                    TextField("ou coller une URL directe .ipa", text: $customURLText)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+                        .font(PX.Font.mono(12.5))
+                        .foregroundStyle(PX.Color.ink)
+                        .onChange(of: customURLText) { _, value in
+                            if !value.isEmpty { customIPA = nil; customName = "" }
+                        }
+                }
+                .padding(.horizontal, PX.Space.base)
+                .padding(.vertical, 10)
+            }
+
+            // ── Avancé ──
+            Text("Avancé")
+                .font(PX.Font.display(20, .heavy))
+                .tracking(-0.2)
+                .foregroundStyle(PX.Color.ink)
+                .padding(.top, PX.Space.hair)
+
+            insetGroup {
+                Button { modifyOpen.toggle() } label: {
+                    row(icon: "slider.horizontal.3", title: "Modify",
+                        subtitle: nil, trailing: chevron(open: modifyOpen))
+                }
+                .buttonStyle(.plain)
+
+                if modifyOpen {
+                    rowDivider
+                    modifyEntry(icon: "puzzlepiece.extension.fill", title: "Tweaks",
+                                count: tweaks.count, open: $tweaksOpen)
+                    if tweaksOpen {
+                        fileList(tweaks) { url in tweaks.removeAll { $0 == url } }
+                        addButton("Ajouter (.dylib / .deb)") {
+                            importKind = .tweak; showingImporter = true
+                        }
+                    }
+
+                    rowDivider
+                    modifyEntry(icon: "shippingbox.fill", title: "Frameworks & extensions",
+                                count: frameworks.count, open: $frameworksOpen)
+                    if frameworksOpen {
+                        fileList(frameworks) { url in frameworks.removeAll { $0 == url } }
+                        addButton("Ajouter (.dylib / .deb)") {
+                            importKind = .framework; showingImporter = true
+                        }
+                    }
+
+                    rowDivider
+                    row(icon: "doc.on.doc.fill", title: "Dylibs existants",
+                        subtitle: "conservés et re-signés automatiquement",
+                        trailing: EmptyView())
+                }
+            }
+
+            Text("Tweaks et frameworks sont injectés avant signature. Un .deb complet : la Substrate est réécrite vers ElleKit et les dépendances embarquées (paliers 1-2-3). Ajoute ElleKit (.deb) si un tweak en dépend.")
+                .font(PX.Font.body(11))
+                .foregroundStyle(PX.Color.inkFaint)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // ── Briques de liste groupée ───────────────────────────────────────────
+
+    /// Conteneur de groupe inséré *dans* une carte : fond sombre à filets, coins
+    /// arrondis. Distinct du `glassCard` pour ne pas empiler deux verres.
+    private func insetGroup<C: View>(@ViewBuilder _ content: () -> C) -> some View {
+        VStack(spacing: 0) { content() }
+            .background(
+                RoundedRectangle(cornerRadius: PX.Radius.control, style: .continuous)
+                    .fill(PX.Color.night.opacity(0.45))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: PX.Radius.control, style: .continuous)
+                    .strokeBorder(PX.Color.horizon, lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: PX.Radius.control, style: .continuous))
+    }
+
+    private var rowDivider: some View {
+        Divider().overlay(PX.Color.horizon).padding(.leading, 56)
+    }
+
+    /// Ligne façon Réglages : tuile d'icône, titre (+ sous-titre), accessoire.
+    private func row(icon: String, tint: Color = PX.Color.azimuth,
+                     title: String, subtitle: String?, trailing: some View) -> some View {
+        HStack(spacing: PX.Space.snug) {
+            IconTile(system: icon, tint: tint, size: 32)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(PX.Font.display(14.5, .semibold))
+                    .foregroundStyle(PX.Color.ink)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(PX.Font.body(11.5))
+                        .foregroundStyle(PX.Color.inkFaint)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: PX.Space.tight)
+            trailing
+        }
+        .padding(.horizontal, PX.Space.base)
+        .padding(.vertical, 11)
+        .contentShape(Rectangle())
+    }
+
+    private func modifyEntry(icon: String, title: String,
+                             count: Int, open: Binding<Bool>) -> some View {
+        Button { open.wrappedValue.toggle() } label: {
+            row(icon: icon, title: title,
+                subtitle: count == 0 ? nil
+                    : (count == 1 ? "1 élément" : "\(count) éléments"),
+                trailing: HStack(spacing: 8) {
+                    if count > 0 {
+                        Text("\(count)")
+                            .font(PX.Font.display(11, .bold))
+                            .foregroundStyle(PX.Color.azimuth)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(PX.Color.azimuth.opacity(0.16)))
+                    }
+                    chevron(open: open.wrappedValue)
+                })
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func chevron(open: Bool) -> some View {
+        Image(systemName: "chevron.right")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(PX.Color.inkFaint)
+            .rotationEffect(.degrees(open ? 90 : 0))
+    }
+
+    @ViewBuilder
+    private func fileList(_ urls: [URL], remove: @escaping (URL) -> Void) -> some View {
+        VStack(spacing: 7) {
+            if urls.isEmpty {
+                Text("Aucun fichier ajouté")
+                    .font(PX.Font.body(11.5))
+                    .foregroundStyle(PX.Color.inkFaint)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                ForEach(urls, id: \.self) { url in
+                    HStack(spacing: PX.Space.tight) {
+                        Image(systemName: url.pathExtension.lowercased() == "deb"
+                              ? "shippingbox" : "puzzlepiece.extension")
+                            .font(.system(size: 11))
+                            .foregroundStyle(PX.Color.azimuth)
+                        Text(url.lastPathComponent)
+                            .font(PX.Font.mono(11))
+                            .foregroundStyle(PX.Color.inkMuted)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer(minLength: 0)
+                        Button { remove(url) } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 13))
+                                .foregroundStyle(PX.Color.inkFaint)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .padding(.leading, 56)
+        .padding(.trailing, PX.Space.base)
+        .padding(.bottom, PX.Space.tight)
+    }
+
+    private func addButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: "plus")
+        }
+        .buttonStyle(SecondaryButtonStyle())
+        .padding(.leading, 56)
+        .padding(.trailing, PX.Space.base)
+        .padding(.bottom, PX.Space.snug)
     }
 
     private var actionLabel: String {
@@ -663,7 +828,7 @@ struct SideloadScreen: View {
             }
 
             let ipa = try await resolveIPA()
-            let dylibs = target == .custom ? tweaks.map(\.path) : []
+            let dylibs = target == .custom ? (tweaks + frameworks).map(\.path) : []
             let special = try await onBackground {
                 try FFI.installIPA(
                     session: session, tunnel: tunnel,
@@ -696,11 +861,18 @@ struct SideloadScreen: View {
                         customURLText = ""
                     }
                 }
-            case .dylib:
+            case .tweak:
                 for src in urls {
                     let dest = try copyIntoTemp(src)
                     if !tweaks.contains(dest) {
                         withAnimation(PX.Motion.settle) { tweaks.append(dest) }
+                    }
+                }
+            case .framework:
+                for src in urls {
+                    let dest = try copyIntoTemp(src)
+                    if !frameworks.contains(dest) {
+                        withAnimation(PX.Motion.settle) { frameworks.append(dest) }
                     }
                 }
             }
