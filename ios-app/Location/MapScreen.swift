@@ -9,6 +9,20 @@ import UniformTypeIdentifiers
 /// sujet, c'est le territoire, pas les contrôles. Chaque panneau n'apparaît
 /// que quand il a quelque chose à dire — un écran couvert de commandes inertes
 /// est ce qu'on cherche à éviter.
+///
+/// ── POURQUOI PAS DE BANDEAU NI DE RAIL ────────────────────────────────────
+///
+/// Les trois autres écrans partagent une machine à phases, un bandeau coloré
+/// et un rail numéroté. Pas celui-ci, et c'est délibéré : ces éléments servent
+/// à conduire quelqu'un à travers une suite d'étapes. Ici il n'y a pas de
+/// suite — on regarde un territoire et on y pose un point.
+///
+/// L'état est donc porté par `StatusBar`, qui remplit exactement le même rôle
+/// dans un vocabulaire adapté à la carte, et par le marqueur lui-même. C'est
+/// aussi le seul écran où **l'ambre a le droit d'exister** : quand la position
+/// est simulée, le marqueur, la bande d'instruments et la barre d'onglets
+/// virent ensemble. Un bandeau supplémentaire diluerait ce signal, qui est la
+/// chose la plus importante que cette app ait à dire.
 struct MapScreen: View {
 
     @EnvironmentObject private var engine: LocationEngine
@@ -19,13 +33,15 @@ struct MapScreen: View {
     @State private var showingImporter = false
     @State private var importError: String?
     @State private var fixCount = 0
+    @State private var shown = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
             map
             overlays
         }
-        .safeAreaInset(edge: .top) { toolbar }
+        .onAppear { shown = true }
+        .safeAreaInset(edge: .top) { toolbar.appear(0, shown) }
         .fileImporter(
             isPresented: $showingImporter,
             allowedContentTypes: [UTType(filenameExtension: "gpx") ?? .xml]
@@ -95,6 +111,7 @@ struct MapScreen: View {
 
             HStack(alignment: .bottom, spacing: PX.Space.snug) {
                 StatusBar(state: engine.state)
+                    .appear(1, shown)
 
                 if engine.state == .simulating || isDegraded {
                     Joystick { bearing, speed in

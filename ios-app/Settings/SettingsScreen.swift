@@ -6,34 +6,161 @@ import SwiftUI
 /// avec le flag `device` désactivé, toutes les fonctions natives renvoient
 /// « non compilé ». Sans cette ligne, l'utilisateur passerait une heure à
 /// soupçonner son VPN.
+///
+/// Même grammaire que les trois autres écrans : bande d'instruments, titre en
+/// display, un seul élément coloré qui porte l'état, cascade. Le `NavigationStack`
+/// et son titre système ont disparu — ils juraient avec le reste, seul cet écran
+/// en avait un.
+///
+/// Le bandeau porte ici l'état du **lien**, parce que c'est la question que se
+/// pose quiconque ouvre cet écran : est-ce que l'appareil répond, et sinon où
+/// ça coince.
 struct SettingsScreen: View {
 
     @EnvironmentObject private var connection: DeviceConnection
+    @EnvironmentObject private var location: LocationEngine
     @StateObject private var log = LogBridge.shared
 
     @AppStorage("anisetteURL") private var anisetteURL = "https://ani.sidestore.io"
     @State private var interfaces: [(name: String, address: String)] = []
+    @State private var shown = false
+
+    // MARK: - Phase
+
+    enum Phase: Equatable {
+        case vpnDown
+        case wrongSubnet(String)
+        case vpnUp
+        case linked(Int)
+
+        var tint: Color {
+            switch self {
+            case .vpnDown:     PX.Color.alert
+            case .wrongSubnet: PX.Color.alert
+            case .vpnUp:       PX.Color.azimuth
+            case .linked:      PX.Color.verdant
+            }
+        }
+
+        var label: String {
+            switch self {
+            case .vpnDown:     "VPN loopback absent"
+            case .wrongSubnet: "VPN sur le mauvais sous-réseau"
+            case .vpnUp:       "VPN prêt"
+            case .linked:      "Lien établi"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .vpnDown:     "shield.lefthalf.filled.slash"
+            case .wrongSubnet: "exclamationmark.triangle.fill"
+            case .vpnUp:       "shield.lefthalf.filled"
+            case .linked:      "checkmark.seal.fill"
+            }
+        }
+
+        var detail: String {
+            switch self {
+            case .vpnDown:
+                "ouvre LocalDevVPN et touche Connect — rien ne peut aboutir sans lui"
+            case .wrongSubnet(let found):
+                "interfaces trouvées : \(found)"
+            case .vpnUp:
+                "établis le lien dans l'onglet Jumelage"
+            case .linked(let count):
+                "\(count) services exposés par l'appareil"
+            }
+        }
+    }
+
+    private var phase: Phase {
+        if !connection.services.isEmpty { return .linked(connection.services.count) }
+        switch connection.tunnelState {
+        case .down:                    return .vpnDown
+        case .wrongSubnet(let found):  return .wrongSubnet(found)
+        case .connecting, .connected:  return .vpnUp
+        }
+    }
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                PX.Color.canvas
+        ZStack {
+            PX.Color.canvas
 
-                ScrollView {
-                    VStack(spacing: PX.Space.snug) {
-                        buildCard
-                        anisetteCard
-                        networkCard
-                        consoleCard
-                    }
-                    .padding(PX.Space.base)
-                    .padding(.bottom, 90)
+            ScrollView {
+                VStack(spacing: PX.Space.snug) {
+                    InstrumentStrip(
+                        latitude: location.currentFix?.latitude,
+                        longitude: location.currentFix?.longitude,
+                        sessionLabel: "\(connection.deviceIP) : \(DeviceConnection.rsdPort)",
+                        live: location.state == .simulating
+                    )
+
+                    title
+                        .appear(0, shown)
+
+                    statusBanner
+                        .appear(1, shown)
+
+                    buildCard.appear(2, shown)
+                    anisetteCard.appear(3, shown)
+                    networkCard.appear(4, shown)
+                    consoleCard.appear(5, shown)
                 }
+                .padding(.horizontal, PX.Space.base)
+                .padding(.bottom, 110)
             }
-            .navigationTitle("Réglages")
-            .navigationBarTitleDisplayMode(.inline)
         }
+        .onAppear { shown = true }
+        .animation(PX.Motion.settle, value: connection.tunnelState)
+        .animation(PX.Motion.acquire, value: connection.services.count)
         .task { interfaces = DeviceConnection.activeInterfaces() }
+    }
+
+    private var title: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("Réglages")
+                .font(PX.Font.display(30, .heavy))
+                .foregroundStyle(PX.Color.ink)
+            Text("Ce que l'appareil déclare, et ce que le cœur natif journalise.")
+                .font(PX.Font.body(13))
+                .foregroundStyle(PX.Color.inkMuted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, PX.Space.tight)
+    }
+
+    /// Le seul élément coloré, comme sur les trois autres écrans.
+    private var statusBanner: some View {
+        HStack(spacing: PX.Space.snug) {
+            ZStack {
+                Circle()
+                    .fill(phase.tint.opacity(0.16))
+                    .frame(width: 42, height: 42)
+                Image(systemName: phase.icon)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(phase.tint)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(phase.label)
+                    .font(PX.Font.display(15, .semibold))
+                    .foregroundStyle(PX.Color.ink)
+                Text(phase.detail)
+                    .font(PX.Font.body(12))
+                    .foregroundStyle(PX.Color.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(PX.Space.base)
+        .glassCard(emphasis: true)
+        .overlay(
+            RoundedRectangle(cornerRadius: PX.Radius.card, style: .continuous)
+                .strokeBorder(phase.tint.opacity(0.34), lineWidth: 1)
+        )
+        .shadow(color: phase.tint.opacity(0.22), radius: 16, y: 6)
+        .animation(PX.Motion.settle, value: phase)
     }
 
     private var buildCard: some View {
