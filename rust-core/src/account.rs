@@ -315,6 +315,16 @@ mod imp {
     }
 }
 
+/// Accès interne à la session, pour `install.rs`. Les handles restent opaques
+/// côté Swift ; c'est le seul endroit du crate qui déballe celui-ci.
+///
+/// # Safety
+/// `session` non nul, issu de `px_apple_signin`, encore vivant.
+#[cfg(feature = "device-account")]
+pub(crate) unsafe fn session_inner(session: *mut PxSignSession) -> &'static mut imp::Session {
+    &mut (*session).inner
+}
+
 /// Certificats de developpement iOS de l equipe, en JSON. NULL en cas d echec.
 /// La chaine rendue doit etre liberee par `px_string_free`.
 ///

@@ -1,0 +1,214 @@
+//! Installation d'un IPA, de bout en bout et sans ordinateur.
+//!
+//! Quatre gestes, dans cet ordre, et l'ordre n'est pas négociable :
+//!
+//!   1. `ensure_device_registered` — l'appareil doit appartenir à l'équipe
+//!      **avant** toute signature. Sinon Apple refuse le profil de
+//!      provisionnement avec l'erreur **8220**, dont le message ne dit rien.
+//!   2. `sign_app` — enregistre l'App ID, récupère ou crée le certificat, écrit
+//!      le profil, signe. Rend le bundle signé et, accessoirement, l'app
+//!      spéciale détectée (SideStore, LiveContainer…).
+//!   3. AFC — pousse le bundle vers `PublicStaging` par le tunnel.
+//!   4. `installation_proxy` — demande l'installation de ce qui a été poussé.
+//!
+//! Les étapes 3 et 4 sont assurées par `idevice::utils::installation`, dont les
+//! variantes `*_rsd` prennent exactement `(&mut impl RsdProvider, &mut
+//! RsdHandshake)` — soit ce que détient déjà notre tunnel, `AdapterHandle`
+//! implémentant `RsdProvider`.
+//!
+//! ── CE QU'ON N'UTILISE PAS, ET POURQUOI ───────────────────────────────────
+//!
+//! **`isideload::install_app`** exige un `IdeviceProvider`, donc un
+//! `PairingFile` **lockdown**, que notre jumelage RPPairing ne produit pas.
+//! Elle est structurellement hors de portée, pas seulement peu pratique.
+//!
+//! **`isideload::install_app_rsd`** existe pourtant et ferait l'affaire — sauf
+//! que ses types viennent d'`idevice` 0.1.65 (crates.io, tiré par isideload)
+//! alors que le tunnel produit ceux d'`idevice` git. Deux crates distincts,
+//! types non interchangeables : c'est exactement ce que l'étape CI « symboles
+//! dupliqués » veille à préserver. Un pont coûterait une seconde pile RSD pour
+//! économiser quarante lignes.
+//!
+//! **`Sideloader::install_app`** ne fait qu'enchaîner ; son premier geste est
+//! de lire l'appareil par lockdown. On reprend donc son enchaînement à la main.
+//!
+//! ── DEUX RUNTIMES, ET C'EST VOULU ─────────────────────────────────────────
+//!
+//! La signature s'exécute sur le runtime de la session Apple, l'installation
+//! sur celui du tunnel — parce que les tâches de fond de la pile TCP y vivent.
+//! Les deux phases sont séquentielles, donc jamais concurrentes sur la même
+//! ressource.
+
+use crate::account::PxSignSession;
+use crate::tunnel::PxTunnel;
+use crate::*;
+
+/// Progression, de 0 à 100. Appelé depuis des threads Rust — l'implémentation
+/// Swift doit donc être une fonction de **portée fichier**, sans quoi le
+/// runtime trappe sur l'isolation d'acteur.
+pub type PxProgressCallback = extern "C" fn(u32, *const c_char);
+
+/// Installe un `.ipa` : enregistrement de l'appareil, signature, transfert,
+/// installation.
+///
+/// `udid` vient du fichier d'identité écrit au moment du jumelage — le
+/// `RpPairingFile` ne le contient pas.
+///
+/// Rend le nom de l'app spéciale détectée (« SideStore », « SideStore+
+/// LiveContainer »…) ou une chaîne vide si l'IPA n'en est pas une. NULL en cas
+/// d'échec. À libérer par `px_string_free`.
+///
+/// **Bloquant**, et longuement : plusieurs allers-retours chez Apple puis un
+/// transfert de fichier. À appeler depuis `DispatchQueue.global`.
+///
+/// # Safety
+/// `session` issu de `px_apple_signin`, `tunnel` de `px_tunnel_connect`, tous
+/// deux encore vivants. Chaînes UTF-8 terminées par NUL.
+#[no_mangle]
+pub unsafe extern "C" fn px_install_ipa(
+    session: *mut PxSignSession,
+    tunnel: *mut PxTunnel,
+    ipa_path: *const c_char,
+    udid: *const c_char,
+    device_name: *const c_char,
+    on_progress: PxProgressCallback,
+) -> *mut c_char {
+    clear_last_error();
+
+    if session.is_null() || tunnel.is_null() {
+        set_last_error("px_install_ipa : session ou tunnel nul");
+        return ptr::null_mut();
+    }
+    let (Some(ipa), Some(udid)) = (cstr(ipa_path), cstr(udid)) else {
+        set_last_error("px_install_ipa : chemin d'IPA ou UDID nul");
+        return ptr::null_mut();
+    };
+    if udid.is_empty() {
+        set_last_error(
+            "px_install_ipa : UDID vide — refais le jumelage, l'identité de l'appareil est écrite à ce moment-là",
+        );
+        return ptr::null_mut();
+    }
+    let name = cstr(device_name).unwrap_or_else(|| "iPhone".to_string());
+
+    #[cfg(all(feature = "device-account", feature = "device-pairing"))]
+    {
+        guard("px_install_ipa", ptr::null_mut(), || {
+            match imp::install(session, tunnel, &ipa, &udid, &name, on_progress) {
+                Ok(special) => CString::new(special)
+                    .map(|c| c.into_raw())
+                    .unwrap_or(ptr::null_mut()),
+                Err(e) => {
+                    set_last_error(e);
+                    ptr::null_mut()
+                }
+            }
+        })
+    }
+    #[cfg(not(all(feature = "device-account", feature = "device-pairing")))]
+    {
+        let _ = (ipa, udid, name, on_progress);
+        set_last_error(
+            "px_install_ipa : compilé sans --features device-account,device-pairing",
+        );
+        ptr::null_mut()
+    }
+}
+
+#[cfg(all(feature = "device-account", feature = "device-pairing"))]
+mod imp {
+    use super::PxProgressCallback;
+    use crate::account::PxSignSession;
+    use crate::tunnel::PxTunnel;
+    use isideload::dev::devices::DevicesApi;
+    use std::ffi::CString;
+
+    /// Étape franchie, poussée à Swift avec la progression. Les bornes de
+    /// pourcentage sont arbitraires mais monotones : une barre qui recule est
+    /// pire que pas de barre du tout.
+    fn step(cb: PxProgressCallback, percent: u32, label: &str) {
+        tracing::info!("[{percent}%] {label}");
+        if let Ok(c) = CString::new(label) {
+            cb(percent, c.as_ptr());
+        }
+    }
+
+    pub unsafe fn install(
+        session: *mut PxSignSession,
+        tunnel: *mut PxTunnel,
+        ipa: &str,
+        udid: &str,
+        device_name: &str,
+        on_progress: PxProgressCallback,
+    ) -> Result<String, String> {
+        let sign = crate::account::session_inner(session);
+        let tun = crate::tunnel::tunnel_inner(tunnel);
+
+        // ── 1. Enregistrement de l'appareil ───────────────────────────────
+        // Avant la signature, jamais après : le profil de provisionnement est
+        // émis pour un ensemble d'appareils figé au moment de son émission.
+        step(on_progress, 5, "Enregistrement de l'appareil chez Apple");
+        sign.runtime.block_on(async {
+            let team = sign
+                .sideloader
+                .get_team()
+                .await
+                .map_err(|e| format!("equipe : {e}"))?;
+            sign.sideloader
+                .get_dev_session()
+                .ensure_device_registered(&team, device_name, udid, None)
+                .await
+                .map_err(|e| format!("enregistrement de l appareil (erreur 8220 si absent) : {e}"))
+        })?;
+
+        // ── 2. Signature ──────────────────────────────────────────────────
+        step(on_progress, 20, "Signature de l'application");
+        let (signed_path, special) = sign
+            .runtime
+            .block_on(async { sign.sideloader.sign_app(ipa.into(), None, false).await })
+            .map_err(|e| format!("signature : {e}"))?;
+
+        let special_name = special.map(|s| s.to_string()).unwrap_or_default();
+        if !special_name.is_empty() {
+            tracing::info!("application reconnue : {special_name}");
+        }
+
+        // ── 3 et 4. Transfert AFC puis installation ───────────────────────
+        // Sur le runtime du TUNNEL : c'est lui qui fait tourner les tâches de
+        // fond de la pile TCP, et l'adaptateur ne se pilote que de là.
+        step(on_progress, 40, "Transfert vers l'appareil");
+
+        let result = tun.runtime.block_on(async {
+            idevice::utils::installation::install_package_with_callback_rsd(
+                &mut tun.adapter,
+                &mut tun.rsd,
+                &signed_path,
+                // `None` : le helper pose lui-même PackageType = Developer.
+                // Le renseigner nous obligerait à dépendre de `plist`, qu'idevice
+                // ne réexporte pas.
+                None,
+                |(percent, cb): (u64, PxProgressCallback)| async move {
+                    // 40 → 100 : le transfert et l'installation occupent la
+                    // seconde moitié de la barre.
+                    let scaled = 40 + (percent.min(100) as u32 * 60 / 100);
+                    if let Ok(c) = CString::new("Installation") {
+                        cb(scaled, c.as_ptr());
+                    }
+                },
+                on_progress,
+            )
+            .await
+        });
+
+        // Le bundle signé est volumineux et ne resservira pas : on le retire,
+        // que l'installation ait abouti ou non.
+        if let Some(dir) = signed_path.parent() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+
+        result.map_err(|e| format!("installation : {e}"))?;
+
+        step(on_progress, 100, "Installation terminée");
+        Ok(special_name)
+    }
+}

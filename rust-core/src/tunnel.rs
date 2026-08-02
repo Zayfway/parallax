@@ -159,6 +159,16 @@ pub unsafe extern "C" fn px_tunnel_services(tunnel: *mut PxTunnel) -> *mut c_cha
     }
 }
 
+/// Accès interne au tunnel, pour `install.rs`. Même contrat que
+/// `account::session_inner`.
+///
+/// # Safety
+/// `tunnel` non nul, issu de `px_tunnel_connect`, non libéré.
+#[cfg(feature = "device-pairing")]
+pub(crate) unsafe fn tunnel_inner(tunnel: *mut PxTunnel) -> &'static mut imp::Tunnel {
+    &mut (*tunnel).inner
+}
+
 /// Ferme le tunnel et **consomme** le pointeur.
 ///
 /// Toute session GPS ouverte dessus doit être fermée **avant** : elle emprunte
