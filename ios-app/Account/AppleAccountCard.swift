@@ -59,6 +59,10 @@ final class AppleAccountModel: ObservableObject {
     /// connexion, donc personne d'autre n'a besoin du pointeur.
     private var session: OpaquePointer?
 
+    /// Session Apple, **empruntée**. Valide tant que le modèle vit ; jamais
+    /// libérée par l'appelant.
+    var sessionPointer: OpaquePointer? { session }
+
     var isConnected: Bool {
         if case .connected = phase { return true }
         return false
