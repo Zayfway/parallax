@@ -34,20 +34,27 @@ final class RemotePairingBrowser: NSObject, @unchecked Sendable {
     private let lock = NSLock()
     private let gate = DispatchSemaphore(value: 0)
 
-    private var result: Endpoint?
+    private var found: [Endpoint] = []
     private var browser: NetServiceBrowser?
     private var resolving: [NetService] = []
 
-    /// Cherche le premier `_remotepairing._tcp` résolvable.
+    /// Rend **tous** les `_remotepairing._tcp` résolus, pas seulement le
+    /// premier.
+    ///
+    /// Prendre le premier venu était un piège : n'importe quel autre appareil
+    /// Apple du réseau annonce le même type de service, on lui ouvre un socket,
+    /// et pair-verify échoue parce que notre enregistrement ne le concerne pas.
+    /// Le symptôme est indiscernable d'un jumelage périmé. L'appelant essaie
+    /// donc les candidats l'un après l'autre.
     ///
     /// **Bloquant** — à appeler depuis `DispatchQueue.global`, jamais depuis le
-    /// pool coopératif. Rend `nil` si rien n'a répondu dans le délai.
+    /// pool coopératif. Liste vide si rien n'a répondu dans le délai.
     ///
     /// Délai généreux : l'appareil n'annonce le service qu'une fois le mode
     /// développeur actif, et l'annonce met quelques secondes à se propager
     /// après un redémarrage.
-    func discover(timeout: TimeInterval = 12) -> Endpoint? {
-        lock.lock(); result = nil; lock.unlock()
+    func discover(timeout: TimeInterval = 12) -> [Endpoint] {
+        lock.lock(); found = []; lock.unlock()
 
         let worker = Thread { [self] in
             let browser = NetServiceBrowser()
@@ -57,12 +64,18 @@ final class RemotePairingBrowser: NSObject, @unchecked Sendable {
 
             lock.lock(); self.browser = browser; lock.unlock()
 
-            // On rend la main dès qu'un résultat tombe plutôt que d'attendre
-            // le délai complet : le cas nominal doit être rapide.
+            // On laisse tourner un court instant après la première résolution
+            // pour ramasser les autres annonceurs : c'est précisément quand il
+            // y en a plusieurs que l'ordre compte.
             let deadline = Date().addingTimeInterval(timeout)
+            var settleUntil: Date?
             while Date() < deadline {
-                lock.lock(); let done = result != nil; lock.unlock()
-                if done { break }
+                lock.lock(); let count = found.count; lock.unlock()
+                if count > 0 {
+                    let until = settleUntil ?? Date().addingTimeInterval(1.5)
+                    settleUntil = until
+                    if Date() >= until { break }
+                }
                 RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.2))
             }
 
@@ -82,8 +95,8 @@ final class RemotePairingBrowser: NSObject, @unchecked Sendable {
         // pour ne jamais rester bloqué si le run loop est empêché de tourner.
         _ = gate.wait(timeout: .now() + timeout + 1)
 
-        lock.lock(); let found = result; lock.unlock()
-        return found
+        lock.lock(); let candidates = found; lock.unlock()
+        return candidates
     }
 }
 
@@ -108,10 +121,9 @@ extension RemotePairingBrowser: NetServiceBrowserDelegate, NetServiceDelegate {
         guard let host = sender.addresses?.compactMap(Self.literalAddress).first,
               sender.port > 0 else { return }
 
+        let endpoint = Endpoint(host: host, port: UInt16(sender.port), name: sender.name)
         lock.lock()
-        if result == nil {
-            result = Endpoint(host: host, port: UInt16(sender.port), name: sender.name)
-        }
+        if !found.contains(endpoint) { found.append(endpoint) }
         lock.unlock()
     }
 

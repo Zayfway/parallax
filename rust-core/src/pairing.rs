@@ -110,8 +110,30 @@ mod imp {
     use idevice::remote_pairing::{
         PairableHost, PairableHostInfo, RpPairingFile, RpPairingSocket,
     };
+    use idevice::remote_pairing::PeerDevice;
     use std::ffi::{CString, c_char};
     use std::net::Ipv4Addr;
+
+    /// Identite de l appareil, ecrite a cote du fichier de jumelage.
+    ///
+    /// JSON ecrit a la main : serde_json n est active que par `device-account`,
+    /// et ce module vit sous `device-pairing`. Un echec d ecriture n est pas
+    /// fatal — le jumelage lui-meme a reussi, on le journalise et on continue.
+    pub fn peer_path(pairing_path: &str) -> String {
+        format!("{pairing_path}.peer.json")
+    }
+
+    async fn write_peer(pairing_path: &str, peer: &PeerDevice) {
+        let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+        let json = format!(
+            "{{\"udid\":\"{}\",\"name\":\"{}\",\"model\":\"{}\"}}",
+            esc(&peer.remotepairing_udid), esc(&peer.name), esc(&peer.model)
+        );
+        let path = peer_path(pairing_path);
+        if let Err(e) = tokio::fs::write(&path, json).await {
+            tracing::warn!("identite de l appareil non ecrite ({path}) : {e}");
+        }
+    }
     fn emit_ready(cb: PxReadyCallback, id: &str, port: u16, info: &PairableHostInfo) {
         let records = info.mdns_txt_records(id);
         let keys: Vec<CString> = records.iter()
@@ -147,9 +169,20 @@ mod imp {
             tracing::info!("appareil connecte, debut de l appairage");
             let socket = RpPairingSocket::new_device(stream);
             let mut host = PairableHost::new(socket, host_info);
-            host.accept(&mut pairing_file, move |pin| async move {
+            // `accept` rend un PeerDevice, qu on jetait jusqu ici. C est le
+            // SEUL moment ou l UDID de l appareil est disponible gratuitement :
+            // le RpPairingFile ne le contient pas, et le lire ensuite
+            // demanderait lockdown par-dessus le tunnel. On le persiste.
+            let peer = host.accept(&mut pairing_file, move |pin| async move {
                 if let Ok(c) = CString::new(pin) { on_pin(c.as_ptr()); }
             }).await.map_err(|e| format!("hote de jumelage : {e}"))?;
+
+            tracing::info!(
+                "appareil jumele : {} ({}) udid {}",
+                peer.name, peer.model, peer.remotepairing_udid
+            );
+            write_peer(out_path.as_str(), &peer).await;
+
             let bytes = pairing_file.to_bytes();
             let len = bytes.len();
             tokio::fs::write(&out_path, &bytes).await

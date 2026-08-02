@@ -166,23 +166,50 @@ final class DeviceConnection: ObservableObject {
         let browser = self.browser
         let handle: OpaquePointer = try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                guard let endpoint = browser.discover() else {
+                let candidates = browser.discover()
+                guard !candidates.isEmpty else {
                     continuation.resume(throwing: ConnectionError.noService)
                     return
                 }
 
-                let result = path.withCString { p in
-                    endpoint.host.withCString { h in
-                        px_tunnel_connect(p, h, endpoint.port)
+                // Journaliser TOUS les candidats : quand pair-verify échoue, la
+                // première question est « à quoi s'est-on connecté ? », et sans
+                // cette ligne il n'y a aucun moyen de répondre.
+                for candidate in candidates {
+                    LogBridge.noteFromBackground(
+                        "candidat : \(candidate.name) → \(candidate.host):\(candidate.port)"
+                    )
+                }
+
+                // Essai en série. Un autre appareil Apple du réseau annonce le
+                // même service et accepte le socket ; seul le nôtre passera
+                // pair-verify avec notre enregistrement.
+                var lastError: String?
+                for candidate in candidates {
+                    LogBridge.noteFromBackground(
+                        "montage du tunnel vers \(candidate.host):\(candidate.port)…"
+                    )
+                    let result = path.withCString { p in
+                        candidate.host.withCString { h in
+                            px_tunnel_connect(p, h, candidate.port)
+                        }
                     }
+                    if let result {
+                        LogBridge.noteFromBackground("lien accepté par \(candidate.name)")
+                        continuation.resume(returning: result)
+                        return
+                    }
+                    lastError = FFI.lastError
+                    LogBridge.noteFromBackground(
+                        "refusé par \(candidate.name) : \(lastError ?? "raison inconnue")"
+                    )
                 }
-                if let result {
-                    continuation.resume(returning: result)
-                } else {
-                    continuation.resume(throwing: ConnectionError.handshakeFailed(
-                        FFI.lastError ?? "Le tunnel n'a pas pu être établi."
-                    ))
-                }
+
+                continuation.resume(throwing: ConnectionError.handshakeFailed(
+                    candidates.count == 1
+                        ? (lastError ?? "Le tunnel n'a pas pu être établi.")
+                        : "Aucun des \(candidates.count) services trouvés n'a accepté le lien. Dernier refus : \(lastError ?? "raison inconnue")"
+                ))
             }
         }
 

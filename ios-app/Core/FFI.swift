@@ -241,6 +241,14 @@ final class LogBridge: ObservableObject {
     }
 
     func note(_ message: String) { append(message) }
+
+    /// Journalise depuis un fil de fond — découverte Bonjour, appels FFI
+    /// bloquants. `shared` est isolé au `MainActor`, donc on ne le touche que
+    /// depuis une tâche qui y est déjà ; le `Task` ne contient aucun appel
+    /// bloquant, seulement l'ajout d'une ligne.
+    nonisolated static func noteFromBackground(_ message: String) {
+        Task { @MainActor in LogBridge.shared.append(message) }
+    }
     func clear() { lines.removeAll() }
 
     var joined: String { lines.joined(separator: "\n") }
