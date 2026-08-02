@@ -1,26 +1,44 @@
 import SwiftUI
 
-/// Onglet Installer.
-///
-/// Trois changements par rapport à la capture d'origine, chacun pour une raison :
-///
-/// 1. L'action principale est **ancrée** au-dessus de la barre d'onglets via
-///    `safeAreaInset`, et non posée en fin de pile où elle finit dessous.
-/// 2. Le bandeau LocalDevVPN nomme l'action (« Ouvrir LocalDevVPN ») plutôt que
-///    l'état (« Tunnel désactivé ») : un symptôme ne dit pas quoi faire.
-/// 3. Le sélecteur d'app et le canal Stable/Nightly sont deux segments empilés
-///    plutôt qu'un menu déroulant qui recouvre le contrôle voisin à l'ouverture.
+// ═══════════════════════════════════════════════════════════════════════════
+// ONGLET INSTALLER
+//
+// La fonctionnalité principale : mettre SideStore, ou SideStore + LiveContainer,
+// sur l'appareil sans ordinateur. Trois préalables doivent tenir en même temps
+// — compte Apple, identité de l'appareil, lien RSD — et c'est précisément là
+// que l'utilisateur se perd s'il doit deviner lequel manque.
+//
+// L'écran est donc bâti sur le modèle de PairingScreen, qui a résolu le même
+// problème :
+//
+//   · une machine à phases explicite, pas des booléens éparpillés
+//   · UN seul élément coloré — le bandeau — qui porte l'état
+//   · un rail d'étapes numérotées qui dit « tu es ici » sans une ligne de texte
+//   · des entrées en cascade
+//
+//   gris      · un préalable manque
+//   pervenche · prêt, ou opération en cours
+//   vert      · installé
+//   rouge     · échec
+//
+// L'ambre n'apparaît jamais ici : elle signifie « position simulée active »,
+// et une couleur signature qui déborde cesse d'être un signal.
+//
+// La carte de compte est celle de l'écran Certificats. Il n'y a qu'une session
+// Apple dans l'app, donc une seule interface pour l'ouvrir — l'écran avait ses
+// propres champs de mot de passe, qui ne servaient plus à rien.
+// ═══════════════════════════════════════════════════════════════════════════
+
 struct SideloadScreen: View {
 
     @EnvironmentObject private var connection: DeviceConnection
     @EnvironmentObject private var location: LocationEngine
     @EnvironmentObject private var account: AppleAccountModel
 
-    @State private var email = ""
-    @State private var password = ""
     @State private var target: InstallTarget = .sideStore
     @State private var channel: Channel = .stable
     @State private var installing = false
+    @State private var shown = false
     @State private var progress: InstallProgress?
     @State private var failure: String?
     @State private var installed: String?
@@ -49,6 +67,87 @@ struct SideloadScreen: View {
     }
     enum Channel: String, CaseIterable { case stable = "Stable", nightly = "Nightly" }
 
+    // MARK: - Phase
+
+    /// Même principe que `PairingScreen` : une machine explicite, et un seul
+    /// élément coloré qui porte l'état. Les préalables sont ordonnés comme
+    /// l'utilisateur les remplit, pour que le rail puisse dire « tu es ici ».
+    enum Phase: Equatable {
+        case needsAccount
+        case needsPairing
+        case needsLink
+        case ready
+        case working(Int, String)
+        case done(String)
+        case failed(String)
+
+        var step: Int {
+            switch self {
+            case .needsAccount:              0
+            case .needsPairing, .needsLink:  1
+            case .ready:                     2
+            case .working, .done:            3
+            case .failed:                    0
+            }
+        }
+
+        var tint: Color {
+            switch self {
+            case .needsAccount, .needsPairing, .needsLink: PX.Color.inkFaint
+            case .ready:                                   PX.Color.azimuth
+            case .working:                                 PX.Color.azimuth
+            case .done:                                    PX.Color.verdant
+            case .failed:                                  PX.Color.alert
+            }
+        }
+
+        var label: String {
+            switch self {
+            case .needsAccount: "Compte requis"
+            case .needsPairing: "Jumelage requis"
+            case .needsLink:    "Lien requis"
+            case .ready:        "Prêt"
+            case .working:      "Installation"
+            case .done:         "Installé"
+            case .failed:       "Échec"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .needsAccount: "person.crop.circle.badge.exclamationmark"
+            case .needsPairing: "lock.iphone"
+            case .needsLink:    "link.badge.plus"
+            case .ready:        "checkmark.circle"
+            case .working:      "arrow.down.circle"
+            case .done:         "checkmark.seal.fill"
+            case .failed:       "exclamationmark.triangle.fill"
+            }
+        }
+
+        var detail: String {
+            switch self {
+            case .needsAccount: "connecte-toi ci-dessous"
+            case .needsPairing: "aucune identité d'appareil — passe par Jumelage"
+            case .needsLink:    "établis le lien dans l'onglet Jumelage"
+            case .ready:        "tout est en place"
+            case .working(_, let what): what.lowercased()
+            case .done(let name): "\(name) est sur ton écran d'accueil"
+            case .failed:       "voir le détail ci-dessous"
+            }
+        }
+    }
+
+    private var phase: Phase {
+        if let failure { return .failed(failure) }
+        if let installed { return .done(installed) }
+        if let progress, installing { return .working(progress.percent, progress.label) }
+        if !account.isConnected { return .needsAccount }
+        if FFI.pairedDevice(besidePairingFile: PairingStore.fileURL) == nil { return .needsPairing }
+        if connection.tunnelPointer == nil { return .needsLink }
+        return .ready
+    }
+
     var body: some View {
         ZStack {
             PX.Color.canvas
@@ -63,30 +162,44 @@ struct SideloadScreen: View {
                     )
 
                     header
+                        .appear(0, shown)
 
-                    accountCard
+                    statusBanner
+                        .appear(1, shown)
+
+                    rail
+                        .appear(2, shown)
+
+                    // La carte de compte est celle de l'écran Certificats :
+                    // une seule session Apple dans toute l'app, donc une seule
+                    // interface pour l'ouvrir.
+                    AppleAccountCard()
+                        .appear(3, shown)
+
                     targetCard
+                        .appear(4, shown)
 
                     if installing || progress != nil {
                         progressCard
-                    }
-
-                    if let installed {
-                        resultCard(installed)
+                            .transition(.asymmetric(
+                                insertion: .scale(scale: 0.96).combined(with: .opacity),
+                                removal: .opacity
+                            ))
                     }
 
                     if let failure {
                         failureCard(failure)
-                    }
-
-                    if !connection.tunnelState.isConnected {
-                        tunnelCard
+                            .transition(.move(edge: .top).combined(with: .opacity))
                     }
                 }
                 .padding(.horizontal, PX.Space.base)
                 .padding(.bottom, PX.Space.wide)
             }
         }
+        .onAppear { shown = true }
+        .animation(PX.Motion.settle, value: installing)
+        .animation(PX.Motion.acquire, value: installed)
+        .animation(PX.Motion.settle, value: failure)
         .onReceive(NotificationCenter.default.publisher(for: .installProgress)) { note in
             guard let update = note.object as? InstallProgress else { return }
             withAnimation(PX.Motion.settle) { progress = update }
@@ -95,7 +208,7 @@ struct SideloadScreen: View {
             Button {
                 Task { await install() }
             } label: {
-                Text(installing ? "Installation…" : "Installer \(target.rawValue)")
+                Text(actionLabel)
             }
             .buttonStyle(ProminentButtonStyle(enabled: canInstall))
             .disabled(!canInstall)
@@ -124,36 +237,110 @@ struct SideloadScreen: View {
         .padding(.top, PX.Space.tight)
     }
 
-    private var accountCard: some View {
-        VStack(alignment: .leading, spacing: PX.Space.snug) {
-            SectionLabel("Compte Apple")
-
-            TextField("", text: $email, prompt: Text("nom@icloud.com")
-                .foregroundStyle(PX.Color.inkFaint))
-                .textContentType(.username)
-                .keyboardType(.emailAddress)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .field("Identifiant", mono: true)
-
-            SecureField("", text: $password, prompt: Text("••••••••")
-                .foregroundStyle(PX.Color.inkFaint))
-                .textContentType(.password)
-                .field("Mot de passe")
-
-            // La revendication de confidentialité est posée là où l'utilisateur
-            // décide, pas enterrée dans un écran « À propos ». Et elle est
-            // exacte : le relais Anisette est nommé, parce qu'il existe.
-            Label {
-                Text("Le mot de passe reste sur l'appareil. L'attestation Apple passe par un relais Anisette, configurable dans les réglages.")
-            } icon: {
-                Image(systemName: "lock.shield")
+    /// Le seul élément qui change de couleur. Il porte l'état à lui seul, ce
+    /// qui évite de teinter six composants et de les tenir synchronisés.
+    private var statusBanner: some View {
+        HStack(spacing: PX.Space.snug) {
+            ZStack {
+                Circle()
+                    .fill(phase.tint.opacity(0.16))
+                    .frame(width: 42, height: 42)
+                Image(systemName: phase.icon)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(phase.tint)
             }
-            .font(PX.Font.body(11.5))
-            .foregroundStyle(PX.Color.inkFaint)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(phase.label)
+                    .font(PX.Font.display(15, .semibold))
+                    .foregroundStyle(PX.Color.ink)
+                Text(phase.detail)
+                    .font(PX.Font.body(12))
+                    .foregroundStyle(PX.Color.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(PX.Space.base)
+        .glassCard(emphasis: true)
+        .overlay(
+            RoundedRectangle(cornerRadius: PX.Radius.card, style: .continuous)
+                .strokeBorder(phase.tint.opacity(0.34), lineWidth: 1)
+        )
+        .shadow(color: phase.tint.opacity(0.22), radius: 16, y: 6)
+        .animation(PX.Motion.settle, value: phase)
+    }
+
+    /// Trois préalables, dans l'ordre où on les remplit. Le trait se remplit
+    /// vers le bas : c'est le seul endroit où la progression est un mouvement.
+    private var rail: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionLabel("Préalables")
+                .padding(.bottom, PX.Space.snug)
+
+            step(1, "Compte Apple",
+                 "Il signe l'application et enregistre l'appareil auprès d'Apple.")
+            connector(filled: phase.step >= 2)
+            step(2, "Lien avec l'appareil",
+                 "Le transfert et l'installation passent par lui. Onglet Jumelage.")
+            connector(filled: phase.step >= 3)
+            step(3, "Installation",
+                 "Téléchargement, signature, transfert, puis pose sur l'écran d'accueil.")
         }
         .padding(PX.Space.base)
         .glassCard()
+    }
+
+    private func step(_ number: Int, _ heading: String, _ detail: String) -> some View {
+        let active = phase.step == number
+        let done = phase.step > number
+
+        return HStack(alignment: .top, spacing: PX.Space.snug) {
+            ZStack {
+                Circle()
+                    .fill(done ? PX.Color.verdant.opacity(0.18)
+                               : active ? PX.Color.azimuth.opacity(0.20)
+                                        : Color.white.opacity(0.04))
+                    .frame(width: 28, height: 28)
+
+                if done {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(PX.Color.verdant)
+                } else {
+                    Text("\(number)")
+                        .font(PX.Font.mono(12, .bold))
+                        .foregroundStyle(active ? PX.Color.azimuth : PX.Color.inkFaint)
+                }
+            }
+            .overlay(
+                Circle()
+                    .strokeBorder(active ? PX.Color.azimuth.opacity(0.55) : .clear, lineWidth: 1.2)
+                    .frame(width: 28, height: 28)
+            )
+            .scaleEffect(active ? 1.06 : 1)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(heading)
+                    .font(PX.Font.display(13.5, .semibold))
+                    .foregroundStyle(active || done ? PX.Color.ink : PX.Color.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(detail)
+                    .font(PX.Font.body(12))
+                    .foregroundStyle(active ? PX.Color.inkMuted : PX.Color.inkFaint)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .animation(PX.Motion.settle, value: phase.step)
+    }
+
+    private func connector(filled: Bool) -> some View {
+        Rectangle()
+            .fill(filled ? PX.Color.verdant.opacity(0.6) : PX.Color.horizon)
+            .frame(width: 1.5, height: 22)
+            .padding(.leading, 13)
+            .animation(PX.Motion.settle, value: filled)
     }
 
     /// Une seule barre, pervenche : opération en cours. Jamais d'ambre, qui ne
@@ -189,25 +376,6 @@ struct SideloadScreen: View {
         .animation(PX.Motion.settle, value: progress)
     }
 
-    private func resultCard(_ name: String) -> some View {
-        HStack(spacing: PX.Space.snug) {
-            Image(systemName: "checkmark.seal.fill")
-                .font(.system(size: 24))
-                .foregroundStyle(PX.Color.verdant)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("\(name) installé")
-                    .font(PX.Font.display(14.5, .semibold))
-                    .foregroundStyle(PX.Color.ink)
-                Text("Cherche-le sur ton écran d'accueil.")
-                    .font(PX.Font.body(12))
-                    .foregroundStyle(PX.Color.inkMuted)
-            }
-            Spacer()
-        }
-        .padding(PX.Space.base)
-        .glassCard()
-    }
-
     private func failureCard(_ message: String) -> some View {
         HStack(alignment: .top, spacing: PX.Space.snug) {
             Image(systemName: "exclamationmark.triangle.fill")
@@ -236,41 +404,15 @@ struct SideloadScreen: View {
         .glassCard()
     }
 
-    private var tunnelCard: some View {
-        HStack(alignment: .top, spacing: PX.Space.snug) {
-            Image(systemName: "shield.lefthalf.filled.slash")
-                .font(.system(size: 17))
-                .foregroundStyle(PX.Color.alert)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Ouvre LocalDevVPN")
-                    .font(PX.Font.display(14, .semibold))
-                    .foregroundStyle(PX.Color.alert)
-                Text("L'installation passe par son tunnel local.")
-                    .font(PX.Font.body(12))
-                    .foregroundStyle(PX.Color.inkMuted)
-            }
-
-            Spacer()
-
-            Link(destination: URL(string: "localdevvpn://")!) {
-                Text("Ouvrir")
-                    .font(PX.Font.display(13, .semibold))
-                    .foregroundStyle(PX.Color.alert)
-                    .padding(.horizontal, PX.Space.snug)
-                    .padding(.vertical, 7)
-                    .background(Capsule().fill(PX.Color.alert.opacity(0.16)))
-            }
+    private var actionLabel: String {
+        switch phase {
+        case .working(let percent, _): "Installation… \(percent) %"
+        case .done:                    "Réinstaller \(target.rawValue)"
+        case .needsAccount:            "Connecte ton compte Apple"
+        case .needsPairing:            "Jumelage requis"
+        case .needsLink:               "Établis le lien"
+        default:                       "Installer \(target.rawValue)"
         }
-        .padding(PX.Space.base)
-        .background(
-            RoundedRectangle(cornerRadius: PX.Radius.card, style: .continuous)
-                .fill(PX.Color.alert.opacity(0.09))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: PX.Radius.card, style: .continuous)
-                .strokeBorder(PX.Color.alert.opacity(0.28), lineWidth: 1)
-        )
     }
 
     /// Les trois conditions réelles, dans l'ordre où l'utilisateur les remplit :
