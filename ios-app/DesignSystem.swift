@@ -62,19 +62,44 @@ enum PX {
         static var canvas: some View {
             ZStack {
                 night
+
+                // 1. Aurore froide, en haut. Deux paliers indigo plutôt qu'un
+                //    seul dégradé : la lumière a une source nette puis se fond,
+                //    au lieu de s'éteindre d'un coup.
                 RadialGradient(
-                    colors: [SwiftUI.Color(hex: 0x1D2447).opacity(0.95), .clear],
-                    center: .init(x: 0.5, y: -0.1),
-                    startRadius: 0, endRadius: 640
+                    colors: [
+                        SwiftUI.Color(hex: 0x252E5A).opacity(0.92),
+                        SwiftUI.Color(hex: 0x171D38).opacity(0.55),
+                        .clear,
+                    ],
+                    center: .init(x: 0.5, y: -0.14),
+                    startRadius: 0, endRadius: 760
                 )
+
+                // 2. Horizon pervenche, très diffus : le regard ne tombe pas
+                //    dans du noir plat en bas de l'écran.
                 RadialGradient(
-                    colors: [azimuth.opacity(0.10), .clear],
-                    center: .init(x: 0.5, y: 1.08),
-                    startRadius: 0, endRadius: 520
+                    colors: [azimuth.opacity(0.13), .clear],
+                    center: .init(x: 0.5, y: 1.12),
+                    startRadius: 0, endRadius: 560
                 )
+
+                // 3. Voile diagonal : donne un sens à la lumière (haut-gauche
+                //    clair, bas-droit sombre), ce qui fait exister le relief du
+                //    verre par-dessus.
+                LinearGradient(
+                    colors: [
+                        SwiftUI.Color.white.opacity(0.03),
+                        .clear,
+                        SwiftUI.Color.black.opacity(0.14),
+                    ],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                )
+
+                // 4. Vignette : resserre l'attention vers le centre.
                 RadialGradient(
-                    colors: [.clear, SwiftUI.Color.black.opacity(0.28)],
-                    center: .center, startRadius: 250, endRadius: 720
+                    colors: [.clear, SwiftUI.Color.black.opacity(0.34)],
+                    center: .center, startRadius: 230, endRadius: 780
                 )
             }
             .ignoresSafeArea()
@@ -155,19 +180,47 @@ struct GlassCard: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            // 1. Réfraction : le matériau flouté.
             .background(.ultraThinMaterial, in: shape(radius))
-            .background(shape(radius).fill(tint.opacity(emphasis ? 0.74 : 0.52)))
-            .overlay(
-                // L'arête éclairée. Sans elle, ce n'est qu'un rectangle flou.
-                shape(radius).strokeBorder(
+            // 2. Profondeur : un voile teinté, en dégradé vertical plutôt que
+            //    plat — le haut de la carte est un rien plus clair, comme s'il
+            //    captait la lumière du fond.
+            .background(
+                shape(radius).fill(
                     LinearGradient(
-                        colors: [.white.opacity(0.16), .white.opacity(0.05), .white.opacity(0.015)],
-                        startPoint: .topLeading, endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 0.9
+                        colors: [
+                            tint.opacity(emphasis ? 0.82 : 0.60),
+                            tint.opacity(emphasis ? 0.66 : 0.44),
+                        ],
+                        startPoint: .top, endPoint: .bottom
+                    )
                 )
             )
-            .shadow(color: .black.opacity(0.42), radius: 18, y: 8)
+            // 3. Voile intérieur : une lueur douce en haut de la carte, qui
+            //    donne au verre son galbe au lieu d'une surface plate.
+            .overlay(
+                shape(radius)
+                    .fill(
+                        LinearGradient(
+                            colors: [.white.opacity(0.08), .clear],
+                            startPoint: .top, endPoint: .center
+                        )
+                    )
+                    .allowsHitTesting(false)
+            )
+            // 4. L'arête éclairée. Sans elle, ce n'est qu'un rectangle flou.
+            .overlay(
+                shape(radius).strokeBorder(
+                    LinearGradient(
+                        colors: [.white.opacity(0.24), .white.opacity(0.06), .white.opacity(0.02)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
+            )
+            // 5. Détachement : une ombre plus large et plus douce fait flotter
+            //    la carte au-dessus du champ, sans la cerner.
+            .shadow(color: .black.opacity(0.44), radius: 24, y: 12)
     }
 
     private func shape(_ r: CGFloat) -> RoundedRectangle {
@@ -342,23 +395,27 @@ struct ScreenHeader<Accessory: View>: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: PX.Space.snug) {
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 6) {
+                // Grand titre à la Apple : lourd, avec un très léger resserrement
+                // de chasse — les larges titres respirent mieux un poil tassés.
                 Text(title)
-                    .font(PX.Font.display(32, .heavy))
+                    .font(PX.Font.display(33, .heavy))
+                    .tracking(-0.4)
                     .foregroundStyle(PX.Color.ink)
                     .minimumScaleFactor(0.7)
                     .lineLimit(1)
                 Text(subtitle)
-                    .font(PX.Font.body(13.5))
+                    .font(PX.Font.body(14))
                     .foregroundStyle(PX.Color.inkMuted)
+                    .lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
             accessory
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.top, PX.Space.base)
-        .padding(.bottom, PX.Space.hair)
+        .padding(.top, PX.Space.loose)
+        .padding(.bottom, PX.Space.tight)
     }
 }
 
