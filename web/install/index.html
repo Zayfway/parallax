@@ -55,7 +55,36 @@
       hors App Store que depuis Safari, jamais depuis une autre application.
     </p>
 
-    <!-- ── Prérequis ─────────────────────────────────────────────────── -->
+    <!-- Chemin qui marche aujourd'hui : signer avec son propre compte. -->
+    <div class="glass" id="selfSign"
+         style="margin-bottom:14px;border:1px solid rgba(124,140,255,0.28)">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+        <h3 style="margin:0;font-size:17px">Aucune certification valide pour l'instant</h3>
+        <span class="pill off">en attente</span>
+      </div>
+      <p style="color:var(--ink-muted);margin:0 0 14px;font-size:14.5px">
+        L'installation directe s'activera dès qu'un certificat de signature valide
+        sera en place. En attendant, voici le chemin qui marche pour
+        <strong>tout le monde</strong> : télécharge l'IPA et signe-le avec ton
+        propre compte Apple gratuit — c'est ton outil qui fait office de signeur.
+      </p>
+      <ol style="margin:0 0 16px;padding-left:20px;color:var(--ink-muted);
+                 font-size:14.5px;line-height:1.9">
+        <li>Installe <strong>SideStore</strong>, <strong>AltStore</strong> ou
+          <strong>Feather</strong>.</li>
+        <li>Télécharge <code>Parallax.ipa</code>.</li>
+        <li>Ouvre-le dans ton signeur : il le re-signe avec ton compte et
+          l'installe (renouvellement automatique tous les 7 jours).</li>
+      </ol>
+      <div class="actions" style="justify-content:flex-start">
+        <a class="btn primary" href="https://github.com/Zayfway/parallax/releases/latest">
+          Télécharger l'IPA
+        </a>
+        <a class="btn" href="../#installer">Le guide complet</a>
+      </div>
+    </div>
+
+    <!-- ── Prérequis (installation directe, quand un certificat existe) ── -->
     <div class="glass" id="dnsStep" style="margin-bottom:14px">
       <div class="rail">
         <div class="stepline">
@@ -111,8 +140,9 @@
 
 <footer>
   <div class="wrap">
-    Parallax — logiciel libre, licence MIT ·
-    <a href="https://github.com/Zayfway/parallax">github.com/Zayfway/parallax</a>
+    Parallax — code source visible ·
+    <a href="https://github.com/Zayfway/parallax">github.com/Zayfway/parallax</a> ·
+    <a href="https://github.com/Zayfway/parallax/blob/main/LICENSE">licence</a>
   </div>
 </footer>
 
@@ -130,15 +160,18 @@ try {
   const config = await (await fetch('certificates.json', { cache: 'no-store' })).json();
   const usable = config.certificates.filter((c) => c.enabled);
 
+  // Sans certificat valide, on n'affiche que le chemin auto-signature (déjà en
+  // haut) et on masque les étapes profil + certificats, qui ne mènent nulle part.
+  const dnsStep = document.getElementById('dnsStep');
+  const certs = document.getElementById('certs');
+  const selfSign = document.getElementById('selfSign');
+
   if (usable.length === 0) {
-    list.innerHTML = `
-      <p style="color:var(--ink-muted);margin:0">
-        Aucun certificat n'est encore configuré. L'installation directe sera
-        disponible dès qu'un certificat de signature sera en place — d'ici là,
-        passe par
-        <a href="https://github.com/Zayfway/parallax/releases/latest">l'IPA non signé</a>.
-      </p>`;
+    if (dnsStep) dnsStep.style.display = 'none';
+    if (certs) certs.style.display = 'none';
   } else {
+    // Un certificat existe : le chemin direct prend le dessus.
+    if (selfSign) selfSign.style.display = 'none';
     list.innerHTML = '';
     for (const cert of usable) {
       const manifest = buildManifest({

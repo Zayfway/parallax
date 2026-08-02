@@ -36,7 +36,7 @@
   <!-- ── Héros ────────────────────────────────────────────────────────── -->
   <div class="wrap hero">
     <img class="mark" src="icon-512.png" alt="Icône de Parallax">
-    <h1>Ton iPhone, <span class="shift" data-echo="ailleurs">ailleurs</span></h1>
+    <h1>Ton iPhone,<br><span class="shift" data-echo="ailleurs">ailleurs</span></h1>
     <p class="lede">
       Installe SideStore et LiveContainer, et déclare la position de ton choix.
       Entièrement depuis l'appareil — sans Mac, sans PC, sans câble.
@@ -96,11 +96,11 @@
 
       <div class="glass feature reveal">
         <div class="glyph">◧</div>
-        <h3>Open source</h3>
+        <h3>Code visible</h3>
         <p>
-          Tout le code est lisible, licence MIT. Le cœur natif est en Rust,
-          l'interface en SwiftUI, et les builds sont produits publiquement par
-          GitHub Actions.
+          Tout le code est lisible et vérifiable (source visible, sans
+          modification). Le cœur natif est en Rust, l'interface en SwiftUI, et
+          les builds sont produits publiquement par GitHub Actions.
         </p>
       </div>
 
@@ -168,11 +168,38 @@
           <div>
             <h4>Installe</h4>
             <p>
-              Choisis SideStore, ou SideStore + LiveContainer. Le téléchargement,
-              la signature et l'installation s'enchaînent, et tu vois passer
-              chaque étape.
+              Choisis SideStore, ou LiveContainer. Le téléchargement, la
+              signature et l'installation s'enchaînent, et tu vois passer chaque
+              étape dans un journal en direct.
             </p>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:26px">
+      <span class="label">De quoi tu as besoin</span>
+      <h2 style="margin:6px 0 6px">Selon ton cas</h2>
+      <p class="sub">Chaque module n'exige que ce dont il a vraiment besoin.</p>
+      <div class="grid">
+        <div class="glass feature reveal">
+          <h3>iOS 17.4 – 26</h3>
+          <p>Un fichier de jumelage RPPairing importé (généré une fois sur un PC),
+            puis tout tourne sur l'appareil.</p>
+        </div>
+        <div class="glass feature reveal">
+          <h3>iOS 27 et plus</h3>
+          <p>Rien de plus : le jumelage sans ordinateur est intégré à l'app.</p>
+        </div>
+        <div class="glass feature reveal">
+          <h3>Installer des apps</h3>
+          <p>Un compte Apple + <strong>LocalDevVPN</strong> ou
+            <strong>StosVPN</strong>.</p>
+        </div>
+        <div class="glass feature reveal">
+          <h3>Seulement le GPS</h3>
+          <p>Le jumelage (ou le fichier importé) + le VPN loopback.
+            Pas besoin de compte Apple.</p>
         </div>
       </div>
     </div>
@@ -181,20 +208,53 @@
   <!-- ── Installer ────────────────────────────────────────────────────── -->
   <section id="installer" class="wrap">
     <span class="label">Installer</span>
-    <h2>Récupérer Parallax</h2>
-    <p class="sub">L'IPA est produit publiquement par GitHub Actions, à chaque version.</p>
+    <h2>Installer Parallax</h2>
+    <p class="sub">Deux chemins. Le premier marche pour tout le monde, aujourd'hui.</p>
 
+    <!-- Chemin principal : télécharger puis signer avec son propre compte. -->
     <div class="glass reveal" style="margin-bottom:14px">
-      <h3 style="margin:0 0 8px;font-size:17px">Télécharger l'IPA</h3>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+        <h3 style="margin:0;font-size:17px">Télécharger l'IPA et le signer toi-même</h3>
+        <span class="pill up">recommandé</span>
+      </div>
       <p style="color:var(--ink-muted);margin:0 0 18px;font-size:14.5px">
-        Non signé, volontairement. Signer côté serveur imposerait de déposer une
-        clé privée Apple dans un dépôt public — inutile ici, et une très mauvaise
-        idée. Installe-le avec SideStore, AltStore ou Feather, qui le signeront
-        avec ton certificat.
+        L'IPA est <strong>non signé</strong>, volontairement : signer côté serveur
+        imposerait de déposer une clé privée Apple dans un dépôt public. Tu le
+        signes avec <strong>ton propre compte Apple gratuit</strong>, directement
+        sur l'iPhone — c'est ton outil qui fait office de signeur.
       </p>
+
+      <div class="rail" style="margin-bottom:18px">
+        <div class="stepline">
+          <div class="dot">1</div>
+          <div>
+            <h4>Un signeur sur l'iPhone</h4>
+            <p>Installe <strong>SideStore</strong>, <strong>AltStore</strong> ou
+              <strong>Feather</strong>. C'est lui qui signe l'app avec ton compte.</p>
+          </div>
+        </div>
+        <div class="pipe"></div>
+        <div class="stepline">
+          <div class="dot">2</div>
+          <div>
+            <h4>Télécharge <code>Parallax.ipa</code></h4>
+            <p>La dernière version, produite publiquement par GitHub Actions.</p>
+          </div>
+        </div>
+        <div class="pipe"></div>
+        <div class="stepline">
+          <div class="dot">3</div>
+          <div>
+            <h4>Ouvre-le dans ton signeur</h4>
+            <p>Il le re-signe avec ton compte Apple et l'installe. La signature
+              gratuite se renouvelle toute seule tous les 7 jours.</p>
+          </div>
+        </div>
+      </div>
+
       <div class="actions" style="justify-content:flex-start">
         <a class="btn primary" href="https://github.com/Zayfway/parallax/releases/latest">
-          Dernière version
+          Télécharger l'IPA
         </a>
         <a class="btn" href="https://github.com/Zayfway/parallax/actions">
           Builds de développement
@@ -202,15 +262,20 @@
       </div>
     </div>
 
+    <!-- Chemin secondaire : OTA direct, en attente d'un certificat valide. -->
     <div class="glass reveal">
-      <h3 style="margin:0 0 8px;font-size:17px">Installer directement</h3>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+        <h3 style="margin:0;font-size:17px">Installation directe</h3>
+        <span class="pill off">pas de certificat valide</span>
+      </div>
       <p style="color:var(--ink-muted);margin:0 0 18px;font-size:14.5px">
-        Depuis Safari sur l'iPhone, en un geste et sans autre outil. L'app est
-        proposée sous plusieurs certificats : quand Apple en révoque un, les
-        autres restent debout.
+        Installer en un geste depuis Safari, sans autre outil — dès qu'un
+        certificat de signature valide sera en place. <strong>Pour l'instant,
+        aucune certification valide</strong> : prends le chemin ci-dessus, tu
+        signes avec ton propre compte et le résultat est le même.
       </p>
       <div class="actions" style="justify-content:flex-start">
-        <a class="btn primary" href="install/">Installation directe</a>
+        <a class="btn" href="install/">Voir l'installation directe</a>
       </div>
     </div>
   </section>
@@ -240,8 +305,9 @@
 
 <footer>
   <div class="wrap">
-    Parallax — logiciel libre, licence MIT ·
-    <a href="https://github.com/Zayfway/parallax">github.com/Zayfway/parallax</a>
+    Parallax — code source visible ·
+    <a href="https://github.com/Zayfway/parallax">github.com/Zayfway/parallax</a> ·
+    <a href="https://github.com/Zayfway/parallax/blob/main/LICENSE">licence</a>
     <br>
     Non affilié à Apple. SideStore, AltStore et LiveContainer appartiennent à
     leurs auteurs respectifs.

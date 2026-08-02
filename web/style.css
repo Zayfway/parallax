@@ -285,6 +285,23 @@ code {
 .notice strong { color: var(--signal); }
 .notice p { margin: 6px 0 0; color: var(--ink-muted); font-size: 14.5px; }
 
+/* ── Pastilles d'état ──────────────────────────────────────────────────── */
+/* Partagées par les pages. Vert = disponible, gris = pas encore. */
+.pill {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.pill.up { color: var(--verdant); background: rgba(74, 222, 155, 0.13);
+           border: 1px solid rgba(74, 222, 155, 0.3); }
+.pill.off { color: var(--ink-faint); background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(90, 100, 136, 0.35); }
+
 /* ── Pied ──────────────────────────────────────────────────────────────── */
 footer {
   border-top: 1px solid rgba(42, 51, 82, 0.6);

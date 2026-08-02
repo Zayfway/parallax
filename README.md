@@ -1,399 +1,179 @@
-# SideSpoofer — architecture
+# Parallax
 
-App iOS/iPadOS unifiée : sideloading d'IPA + simulation de localisation système,
-entièrement on-device, via le loopback LocalDevVPN.
+**Sideloading d'IPA + spoofing GPS, entièrement sur l'iPhone. Sans Mac, sans PC, sans câble.**
+
+Parallax réunit deux outils qui, jusqu'ici, marchaient chacun de leur côté mais
+jamais sans ordinateur : installer des applications hors App Store (SideStore,
+LiveContainer) et **déclarer la position GPS de ton choix**. Toute la chaîne —
+compte Apple, certificat, signature, transfert, installation — tourne sur
+l'appareil. Cible **iOS 17.4+**, testé sur iOS 27.
+
+Interface **SwiftUI**, cœur natif en **Rust** (exposé en `ParallaxFFI.xcframework`),
+builds produits publiquement par **GitHub Actions**.
+
+> [!NOTE]
+> Code **source visible** : tu peux tout lire et tout compiler, mais pas le
+> modifier ni le redistribuer. Voir [Licence](#licence).
 
 ---
 
-## ⚠️ Trois corrections au brief avant de coder
+## Ce que ça fait
 
-Ces points changent la charge de travail d'un facteur ~5. Ils sont issus des
-`NOTES.md` de SideInstaller et de la doc du crate `idevice`.
+### 📦 Sideloading, sans ordinateur
+- **Jumelage RPPairing** initié par l'appareil : « Jumeler avec Parallax »
+  apparaît dans *Réglages › Confidentialité et sécurité › Mode développeur*, un
+  code s'affiche, et le lien s'établit — par le **tunnel VPN loopback**, pas par
+  le Wi-Fi.
+- **Compte Apple** complet : anisette, 2FA appareil de confiance, session
+  développeur.
+- **Certificats** : liste, **génération** et révocation. Le nombre
+  d'emplacements vient d'Apple, pas d'une limite écrite en dur.
+- **Installation** : télécharge, **signe avec ton propre certificat**, transfère
+  et installe **SideStore** ou **LiveContainer**. Tu vois passer chaque étape,
+  avec un journal en direct.
 
-### 1. Le pairing on-device est bien propre à iOS 27 — mais pas le protocole
+### 📍 Position simulée
+- **Point posé** sur la carte, ou **recherche d'adresse** (barre de recherche →
+  adresse exacte).
+- **Itinéraire** : voiture, vélo, marche (routes réelles via MapKit) ou avion
+  (orthodromie), avec **choix de la vitesse**.
+- **Boucle**, **pause / reprise**, barre d'avancement.
+- **Import GPX**, **joystick** de déplacement au pouce, **lieux enregistrés**.
+- **Point de position réelle** affiché sur la carte, session supervisée qui se
+  rétablit après une micro-coupure du tunnel.
 
-Nuance, et elle compte pour ta matrice de compatibilité. Deux choses distinctes :
+---
 
-- Le **protocole RPPairing** existe depuis **iOS 17.4**. Rien de neuf.
-- Ce qui est **neuf en iOS 27**, c'est l'entrée *Pair with Host* dans
-  Réglages › Confidentialité et sécurité › Mode développeur, qui permet à
-  l'iPhone de se pairer avec un host tournant **sur lui-même**, via le réseau
-  local. C'est ça qui supprime le PC.
+## Comment ça marche, point par point
 
-La doc de Mirage le formule sans ambiguïté : sur iOS 27 l'app fait tourner un
-host de pairing sur le téléphone ; sur iOS 18–26, il faut passer par un
-ordinateur, et si rien n'apparaît sous *Pair with Host*, c'est que la version
-d'iOS ne supporte pas encore le pairing initié par l'appareil.
+1. **Un VPN loopback.** Installe **LocalDevVPN** ou **StosVPN** et touche
+   *Connect*. C'est lui qui fournit l'adresse locale (`10.7.0.1`) par laquelle
+   Parallax parle à l'appareil. **Sans lui, rien ne se connecte.**
+2. **Le jumelage.** Parallax s'annonce sur le réseau local. Va dans
+   *Réglages › Confidentialité et sécurité › Mode développeur*, touche
+   « Jumeler avec Parallax », recopie les six chiffres. Fait **une seule fois**.
+3. **Ton compte Apple.** Il sert à signer et à enregistrer l'appareil auprès
+   d'Apple. Le mot de passe ne quitte pas l'appareil ; l'attestation Apple passe
+   par un relais **Anisette** (voir [Honnêteté](#honnêteté)).
+4. **Installe.** Choisis SideStore ou LiveContainer : téléchargement, signature,
+   transfert et pose sur l'écran d'accueil s'enchaînent.
+5. **Simule ta position** (indépendant du reste) : ouvre l'onglet Carte, pose un
+   point ou lance un trajet.
 
-Conséquence sur ton app : le module 1 fonctionne **uniquement en iOS 27+**. En
-dessous, prévois un chemin d'import de fichier RPPairing généré sur un PC avec
-`idevice_pair` (mode RPPairing). Ce n'est pas un cas marginal si tu vises un
-public large.
+---
 
-**Piège de format :** ce doit être un fichier **RPPairing**. Un
-`.mobiledevicepairing` récupéré de SideStore ou StikDebug est au format
-*lockdown* classique et ne conviendra pas. SideInstaller documente ce même écart
-en sens inverse, quand il écrit le fichier dans le conteneur de SideStore.
+## De quoi tu as besoin, selon ton cas
 
-### 2. Le cœur Rust ne doit pas réimplémenter lockdownd, la crypto, ni les serveurs Apple
-
-C'est la décision d'architecture la plus importante, et SideInstaller l'a prise
-dans l'autre sens que ton brief. Répartition réelle de son code :
-
-| Langage | Part |
+| Ton cas | Ce qu'il te faut |
 |---|---|
-| Makefile | 38,4 % |
-| C | 38,0 % |
-| Swift | 12,0 % |
-| **Rust** | **2,4 %** |
-
-Les 38 % de C sont le `idevice.h` généré par cbindgen (8948 lignes). Les 2,4 %
-de Rust sont une **fine couche FFI**, pas un cœur protocolaire.
-
-Sa justification, citée :
-
-> Rather than re-implement idevice's threading-sensitive RSD tunnel + service
-> clients by hand (untestable here, high risk), `rust-core` depends on both…
-
-Tu t'appuies donc sur trois dépendances qui font tout le travail lourd :
-
-- **`idevice`** (jkcoxson) — Rust pur : lockdownd, RSD, XPC, RemotePairing, DVT,
-  AFC, installation_proxy, mobile_image_mounter, `location_simulation`.
-- **`idevice-ffi`** — le C-FFI déjà éprouvé, celui que StikDebug embarque.
-- **`isideload`** (nab138) — Apple ID, anisette, certificats, profils, signature
-  (via `apple-codesign`).
-
-Ton `rust-core/` n'écrit que trois choses : le host RPPairing forké, le pont 2FA,
-et le module `location.rs` ci-dessous. C'est tout.
-
-### 3. Il n'existe pas de « Developer Location Service » Apple
-
-Le service réel est **DVT / Instruments** :
-`com.apple.instruments.server.services.LocationSimulation`, atteint via le tunnel
-RSD. Le crate `idevice` l'expose derrière les features `dvt` +
-`location_simulation`. Rien n'a été « étendu en iOS 27 » ; c'est le même canal
-qu'utilise `pymobiledevice3 developer dvt simulate-location` depuis iOS 17.
-
-**Coût possible, à vérifier en premier :** dans la chaîne classique
-(pymobiledevice3), les services DVT exigent que le **Developer Disk Image soit
-monté**, et sur iOS 17+ cette image est *personnalisée* — requête TSS chez Apple
-pour un ticket lié au device. D'où les features `mobile_image_mounter` + `tss`
-ici, et le dossier `build-dd/` chez SideInstaller.
-
-Mais la doc de Mirage ne mentionne **aucune** étape DDI côté utilisateur : juste
-le pairing, puis ça marche. Donc de deux choses l'une — soit elle monte l'image
-silencieusement, soit le chemin RSD moderne n'en a pas besoin. **Teste
-`ss_ddi_is_mounted` avant d'écrire l'écran de montage.** Si l'image est déjà là,
-tu économises l'étape la plus lourde du projet.
-
-**Piège certain :** la localisation simulée ne survit **pas** à la fermeture du
-canal DVT. C'est pour ça que `pymobiledevice3 simulate-location` reste bloqué
-jusqu'au Ctrl+C — il maintient la session. Ton « self-healing » n'est donc pas un
-confort : c'est une exigence structurelle. Voir `LocationEngine.swift`.
-
-**Contrainte réseau, sous-estimée :** iOS n'autorise le *démarrage* du service
-de localisation que sur Wi-Fi, partage de connexion ou USB — Apple bloque la
-connexion initiale en cellulaire. Une fois la session lancée, elle continue en
-5G. Conséquence directe sur le superviseur : si le canal tombe alors que
-l'appareil est en données cellulaires, **toute tentative de reconnexion échouera
-jusqu'au retour du Wi-Fi**. Une boucle de backoff naïve tournera dans le vide en
-brûlant de la batterie. `LocationEngine` surveille donc le type d'interface et
-suspend les tentatives au lieu de les empiler.
+| **iOS 17.4 – 26** | Un fichier de jumelage RPPairing importé (généré une fois sur PC), puis tout fonctionne sur l'appareil. |
+| **iOS 27+** | Rien de plus : le jumelage sans ordinateur est intégré. |
+| **Installer des apps** | Un compte Apple + LocalDevVPN/StosVPN. |
+| **Seulement le GPS** | Le jumelage (ou le fichier importé) + LocalDevVPN. Pas besoin de compte Apple. |
 
 ---
 
-## Recommandation de départ
+## Installer Parallax
 
-**Ne réécris pas les modules 1 et 2.** Forke SideInstaller (MIT, `ios-app/` +
-`rust-core/` — déjà exactement ton schéma) et ajoute le module 3. Tu récupères
-gratuitement le pairing, le tunnel, l'Apple ID, la signature et l'install, tous
-déjà débogués sur matériel réel (double-free house_arrest, `Afc(PermDenied)` sur
-le mauvais chemin, bundle id `<orig>.<teamID>`… — chacun de ces bugs t'aurait
-coûté une soirée).
+L'IPA est **non signé, volontairement** : signer côté serveur imposerait de
+déposer une clé privée Apple dans un dépôt public. Tu le signes toi-même, avec
+ton propre certificat.
 
-Le travail neuf se réduit à : montage DDI + session DVT + superviseur + UI carte.
+1. Télécharge la **[dernière version](https://github.com/Zayfway/parallax/releases/latest)**
+   (`Parallax.ipa`).
+2. Ouvre-le avec **SideStore**, **AltStore** ou **Feather** : ils le
+   re-signent avec ton compte Apple gratuit, directement sur l'appareil.
+3. La signature gratuite expire au bout de 7 jours ; SideStore/AltStore la
+   renouvellent tout seuls en arrière-plan.
 
----
-
-## Arborescence
-
-```
-sidespoofer/
-├── project.yml                    # XcodeGen
-├── build-rust.sh                  # → SideSpooferFFI.xcframework
-├── rust-core/
-│   ├── Cargo.toml
-│   └── src/
-│       ├── lib.rs                 # spine de log tracing → callback Swift
-│       ├── pairing.rs             # host RPPairing forké de StikPair
-│       ├── account.rs             # isideload : login + sign
-│       └── location.rs            # ★ neuf : DDI + DVT LocationSimulation
-└── ios-app/
-    ├── Core/
-    │   ├── DeviceConnection.swift # tunnel RSD (recette StikDebug)
-    │   ├── PairingStore.swift     # RPPairing → Keychain
-    │   └── LocationEngine.swift   # ★ superviseur self-healing
-    ├── Location/
-    │   ├── GPXTrack.swift         # parsing + interpolation
-    │   └── MapScreen.swift        # carte, marqueur, joystick
-    └── Sideload/                  # repris de SideInstaller
-```
-
-## Ordre de construction
-
-Chaque étape doit tourner sur matériel réel avant la suivante. Le simulateur ne
-peut valider ni le pairing, ni le tunnel, ni la DDI, ni la signature.
-
-1. Spine FFI + log console. Vérifiable au simulateur.
-2. RPPairing → fichier sur disque, taille non nulle. **Matériel.**
-3. Tunnel loopback → `lockdownd_get_value` renvoie ProductVersion. **Matériel.**
-4. Montage DDI → `mobile_image_mounter` confirme l'image montée. **Matériel.**
-5. Session DVT → une téléportation bouge Plans. **Matériel.**
-6. Superviseur, joystick, GPX. Le reste est de l'UI.
-
-Ne passe jamais une étape en « probablement bon ». Chaque gate a une assertion
-observable ; si elle n'est pas verte, l'étape suivante échouera de façon
-illisible.
-
-## Dépendances à épingler
-
-`idevice` casse son API à chaque version mineure (avertissement explicite du
-mainteneur jusqu'en 0.2.0). Épingle sur une révision git, pas sur une plage
-sémantique. SideInstaller épingle `7bd551c16c6dd2e058740d85a2d9399a51a776e9`,
-alignée sur StikPair et StikDebug — c'est un point de départ connu-bon.
-
-## Vérifications restées ouvertes
-
-- Les signatures exactes de `LocationSimulationClient` dans la révision épinglée
-  sont à confirmer contre `cargo doc --open` ; `location.rs` documente
-  l'intention, pas une API vérifiée compilée.
-- Le projet « Mirage » cité dans le brief est introuvable sur GitHub. Si c'est
-  un dépôt privé ou renommé, son approche du montage DDI mérite d'être comparée
-  à celle-ci avant d'investir dans l'étape 4.
-
-## Licence et usage
-
-SideInstaller est MIT mais interdit la redistribution de ses builds. Si tu forkes
-et publies des IPA, tu redistribues aussi la surface de confiance : n'importe
-quel fork de ton app peut y insérer un voleur d'identifiants Apple ID sans que
-ce soit visible de l'extérieur. Publie depuis une source unique et dis-le
-clairement dans ton README.
-
-La simulation de localisation viole les CGU de la plupart des apps qui s'en
-servent comme signal — jeux géolocalisés, partage de position, contrôles d'accès
-régionaux. Le bannissement de compte est le risque courant.
+Un **site** guide l'installation pas à pas : voir [`web/`](web/) (publié sur
+GitHub Pages).
 
 ---
 
-## Note sur la revendication « 100 % local »
-
-Visible dans les réglages de SideInstaller : le **serveur Anisette** est
-`https://ani.sidestore.io`. Anisette est le jeu de données d'attestation
-qu'Apple exige pour authentifier un Apple ID hors de ses propres apps, et il ne
-peut pas être produit sur un iPhone non jailbreaké. Il est donc **délégué à un
-serveur tiers**.
-
-Concrètement, à chaque connexion : ton identifiant Apple et le contexte
-d'authentification transitent par une machine que tu ne contrôles pas.
-
-Ce n'est pas un défaut de SideInstaller — c'est structurel, toute la famille
-AltStore/SideStore fonctionne ainsi. Mais « vos identifiants ne quittent jamais
-votre appareil » est, à la lettre, inexact, et un projet open-source qui reprend
-cette phrase telle quelle s'expose à une critique fondée dès la première lecture
-attentive.
-
-Formulation défendable :
-
-> Le mot de passe n'est jamais transmis à un serveur tiers. L'authentification
-> Apple exige en revanche des données d'attestation (Anisette) produites par un
-> serveur relais, configurable dans les réglages. Aucune télémétrie, aucun
-> compte, aucun analytics.
-
-Et rends le serveur configurable, comme sur la capture — c'est ce qui permet à
-un utilisateur exigeant d'héberger le sien.
-
-## Deux détails d'interface repérés sur les captures
-
-- Le bouton **Installer SideStore** passe sous la barre d'onglets. Un
-  `.safeAreaInset(edge: .bottom)` sur le conteneur, ou un `Spacer` de la hauteur
-  de la barre en bas du `ScrollView`, règle le problème. C'est l'action
-  principale de l'écran : elle ne doit jamais être partiellement masquée.
-- Le menu déroulant SideStore / LiveContainer recouvre le sélecteur
-  Stable / Nightly pendant qu'il est ouvert. Sans gravité, mais un `Picker` en
-  style `.menu` placé au-dessus du segment plutôt qu'en dessous évite le
-  chevauchement.
-
-## Sur Mirage, qui est closed-source
-
-Ça ne coûte rien au projet, pour une raison simple : Mirage est une interface
-posée sur les mêmes primitives ouvertes que celles utilisées ici. Sa propre
-documentation de pairing renvoie à **`idevice_pair` de jkcoxson** en mode
-RPPairing — le même auteur, la même stack que `rust-core`. Tout ce que Mirage
-fait techniquement est déjà décrit dans pymobiledevice3 et implémenté sous
-licence MIT dans `idevice`.
-
-Donc : ne décompile pas son IPA. Ce serait inutile — les mécanismes sont
-publics — et ça contaminerait la provenance de ton code au moment de le publier
-sous licence libre. Réimplémenter depuis les sources ouvertes est à la fois plus
-simple et propre par construction.
-
-Ce qui vaut la peine d'être repris de Mirage, en revanche, ce sont ses
-**décisions produit**, qui sont observables sans code : le double moteur
-(GPS override / WiFi), le moniteur de santé avec notification quand un spoof
-tombe, le fait de dire franchement à l'utilisateur quand la session est perdue.
-
-Une nuance sur son mode WiFi : il exige la signature payante, parce qu'un
-tunnel VPN maison réclame l'entitlement Network Extension, indisponible en
-provisioning gratuit. Si ton app vise l'Apple ID gratuit, ce mode t'est fermé —
-c'est précisément pour ça que Mirage bascule automatiquement sur LocalDevVPN
-quand il détecte un sideload gratuit.
-
----
-
-# Dépôt complet — état réel
-
-## Ce qui est garanti, ce qui ne l'est pas
-
-Je n'ai ni Rust, ni Swift, ni Xcode dans mon environnement. **Rien de ce dépôt
-n'a été compilé.** Cette page dit exactement ce que ça implique.
-
-| Partie | État |
-|---|---|
-| Interface SwiftUI, design, navigation | Écrite en entier. Devrait compiler. |
-| Cœur Rust, **profil stub** (défaut) | Ne dépend d'aucune crate externe. Devrait compiler. |
-| Cœur Rust, **profil `device`** | Écrit contre la *documentation* d'idevice, jamais compilé. **Attends-toi à corriger des signatures.** |
-| Chaîne CI → IPA | Écrite selon la pratique courante. À valider au premier run. |
-
-## Le flag `device`
-
-C'est la décision structurante du dépôt.
-
-Par défaut, `rust-core` compile **sans** idevice ni isideload. Il expose la même
-surface C, et chaque fonction renvoie `PX_ERR_NOT_BUILT`. Résultat : le build
-passe en quelques secondes sans réseau, la CI est verte, l'IPA s'installe, et
-toute l'interface est navigable — carte, joystick, GPX, jumelage, réglages.
-
-C'est délibéré, et voici pourquoi : `idevice` annonce des ruptures d'API à
-chaque version mineure jusqu'à 0.2.0, et je n'ai pas lu son code source, juste
-sa documentation. Te livrer quarante fichiers qui en dépendent tous aurait
-produit, au premier push, une cascade d'erreurs où tu n'aurais pas pu
-distinguer mes approximations des vrais problèmes. Une base verte vaut mieux
-qu'une base complète et cassée.
-
-Active ensuite **un module à la fois** :
+## Compiler depuis les sources
 
 ```bash
-./build-rust.sh                    # stub — commence ici
-./build-rust.sh device-location    # GPS seul
-./build-rust.sh device             # tout
+# 1. Le xcframework Rust (les deux cibles + assemblage)
+./build-rust.sh device          # ou : device-pairing,device-account | device-location
+
+# 2. Le projet Xcode
+brew install xcodegen && xcodegen generate
+
+# 3. Archiver (non signé)
+xcodebuild archive -project Parallax.xcodeproj -scheme Parallax \
+  -configuration Release -destination 'generic/platform=iOS' \
+  -archivePath build/Parallax.xcarchive \
+  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
 ```
 
-`Réglages › Version` affiche en permanence le profil compilé. C'est la première
-chose à vérifier quand une fonction ne répond pas.
+La CI (`.github/workflows/build-ipa.yml`) fait exactement ça à chaque push sur
+`main` et publie l'IPA dans la [release](https://github.com/Zayfway/parallax/releases/latest).
 
-## Ordre de travail
+### Profils de compilation
 
-Chaque étape doit tourner sur matériel réel avant la suivante. Le simulateur ne
-valide ni le jumelage, ni le tunnel, ni la DDI, ni la signature.
-
-1. **Profil stub → IPA → installation.** Tu vois l'app. `px_ping` doit
-   apparaître dans le journal : le pont FFI est sain.
-2. **`device-pairing`.** Le code à six chiffres apparaît, Réglages voit
-   « Jumeler avec Parallax », le fichier fait plus de zéro octet.
-3. **Tunnel.** `lockdownd_get_value` renvoie une ProductVersion. **Matériel.**
-4. **`device-location`.** Teste `px_ddi_is_mounted` **avant** d'écrire l'écran
-   de montage : si l'image est déjà là, tu économises l'étape la plus lourde du
-   projet. Puis une téléportation doit bouger Plans.
-5. **`device-account`.** Login, 2FA, certificat, signature, installation.
-
-Ne passe jamais une étape en « probablement bon ». Chaque gate a une assertion
-observable ; sans elle, l'étape suivante échoue de façon illisible.
-
-## Points laissés ouverts, volontairement
-
-- `DeviceConnection.connect()` lève une erreur explicite au lieu de simuler un
-  succès. Le tunnel RSD est le morceau le plus sensible au threading ; il se
-  branche à l'étape 3, contre les signatures vérifiées.
-- `CertificatesScreen` est écrit mais n'est câblé à aucun onglet — la barre en
-  compte déjà quatre. Ajoute-le en `NavigationLink` depuis Réglages, ou
-  remplace un onglet.
-- La DDI n'est pas téléchargée : `DDICache` la lit depuis `Documents/ddi/`.
-  Décide de la source après avoir vérifié à l'étape 4 si le montage est même
-  nécessaire.
-- Le `silence.wav` généré fait une seconde. Il suffit, mais vérifie sur
-  appareil que la boucle empêche bien la suspension pendant le jumelage.
+`device-location`, `device-pairing`, `device-account`, ou `device` (les trois).
+En profil *stub* (aucune feature), l'interface est complète mais aucune
+opération sur l'appareil n'aboutit — utile pour travailler l'UI.
 
 ---
 
-## Design : ce qui a été fait au second passage
+## Architecture
 
-### Le verre, à la main
+```
+ios-app/         SwiftUI. Rien n'appelle px_* hors de Core/FFI.swift.
+rust-core/       Crate parallax-ffi, exposé en ParallaxFFI.xcframework.
+                 build.rs génère include/parallax.h via cbindgen.
+build-rust.sh    Compile les deux cibles et assemble le xcframework.
+web/             Le site (HTML/CSS), publié sur GitHub Pages.
+```
 
-`.glassEffect()` — le vrai Liquid Glass — est une API **iOS 26**. La cible du
-projet est 17.4, pour que les utilisateurs d'iOS 17 à 25 gardent le module GPS
-via un fichier de jumelage importé. Le verre est donc reconstruit en quatre
-couches dans `GlassCard` :
+**Répartition Rust / Swift**, apprise à la dure :
 
-1. matériau système flouté → la réfraction
-2. voile teinté par-dessus → la profondeur
-3. **liseré clair sur l'arête supérieure** → l'éclairage
-4. ombre portée douce → le détachement
+| Rust | Swift |
+|---|---|
+| protocole RPPairing, écoute TCP | annonce Bonjour (`NetService`) |
+| compte Apple, signature | autorisation réseau local |
+| session GPS via DVT | maintien en vie (audio silencieux) |
 
-La couche 3 est celle qu'on oublie, et c'est elle qui sépare « verre » de
-« rectangle flou ».
+### Dépendances épinglées
 
-Le fond n'est plus une couleur plate : `PX.Color.canvas` ajoute un dégradé
-radial en haut d'écran. Sans lui, le matériau translucide n'a rien à réfracter
-et tout le système s'aplatit.
+- [`idevice`](https://github.com/jkcoxson/idevice) — jkcoxson, rev `7bd551c1`
+- [`isideload`](https://github.com/nab138/isideload) — nab138, v0.2.25 (rev
+  `86b2540a`), licence MIT
 
-**Si tu préfères le vrai Liquid Glass**, une seule ligne à changer dans
-`project.yml` — `deploymentTarget: { iOS: "26.0" }` — puis remplacer
-`.glassCard()` par `.glassEffect()`. Tu perds iOS 17–25. Comme le jumelage
-on-device exige déjà iOS 27, la perte est plus faible qu'elle en a l'air : elle
-ne coûte que le chemin « fichier importé depuis un PC ».
+Ces révisions ne doivent **pas** changer sans raison : `isideload` tire aussi
+`idevice` depuis crates.io, et les deux crates doivent coexister sans fusionner
+(l'étape CI « symboles dupliqués » y veille).
 
-### Le vocabulaire de motion
+---
 
-Quatre gestes nommés par intention, dans `PX.Motion` : `tap`, `settle`,
-`acquire`, `breathe`. Quand chaque animation choisit ses propres chiffres,
-l'ensemble part en vrille sans qu'on sache pourquoi.
+## Honnêteté
 
-### Le moment orchestré
+Ton mot de passe Apple ne quitte pas l'appareil. Mais l'authentification Apple
+exige des données d'attestation — **Anisette** — qu'un iPhone non jailbreaké ne
+peut pas produire seul : elles viennent d'un serveur relais tiers. Autrement dit,
+l'identifiant et le contexte d'authentification transitent par une machine que tu
+ne contrôles pas. Ce n'est pas propre à Parallax, c'est **structurel à toute la
+famille AltStore / SideStore** — et le serveur Anisette est configurable dans les
+réglages. Écrire « vos identifiants ne quittent jamais votre appareil » serait
+faux, donc on ne l'écrit pas.
 
-**Un seul.** L'acquisition d'un point : anneaux ambrés qui se propagent une
-fois depuis le marqueur, retour haptique de succès, chiffres de la bande
-d'instruments qui roulent au lieu de sauter.
+---
 
-Il se déclenche sur événement, pas en boucle — un effet permanent devient du
-décor et cesse de signifier quoi que ce soit.
+## Licence
 
-Autour, uniquement du discret : ressort sur les boutons, halo qui respire quand
-la session est vivante, cap qui apparaît sur le joystick pendant le geste
-seulement, retour haptique à chaque changement de palier de vitesse.
+**Code source visible, sans modification** — voir [`LICENSE`](LICENSE).
 
-### La teinte globale
+Tu peux lire tout le code et le compiler pour toi ; tu ne peux pas le modifier
+ni le redistribuer sans autorisation. **Utiliser l'application est libre et
+gratuit pour tout le monde** — la licence ne concerne que le code source. Les
+dépendances tierces gardent leurs propres licences.
 
-Quand la simulation est active, **toute la barre d'onglets passe à l'ambre**.
-C'est le seul endroit où la couleur signature déborde d'un écran : elle devient
-un signal visible même depuis l'onglet Installer, pour qu'on ne puisse pas
-oublier que le GPS ment.
+---
 
-### Certificats
+## Avertissement
 
-L'écran est désormais câblé comme cinquième onglet. Il existe parce qu'Apple
-limite un compte gratuit à trois certificats : au-delà, la signature échoue
-avec un message opaque et l'utilisateur n'a aucun moyen de voir ce qui occupe
-ses emplacements. C'est la première cause d'abandon sur ce type d'outil.
-
-## Avancer sur les modules natifs
-
-Le profil reste `stub`. Pour passer à la suite, la méthode la plus rapide n'est
-pas de deviner les signatures d'idevice mais de **laisser le compilateur les
-dicter** :
-
-Actions → Build IPA → **Run workflow** → features : `device-location`.
-
-Cargo répondra par des erreurs très précises — « expected 2 arguments, found 3 »,
-« no method named `set` found ». C'est de la documentation exacte, obtenue en
-un run, là où la doc publique reste vague. Récupère le log et on corrige
-`location.rs` en une passe.
+Non affilié à Apple. SideStore, AltStore et LiveContainer appartiennent à leurs
+auteurs respectifs. Cet outil est fourni pour l'apprentissage et l'usage
+personnel ; tu es responsable de ce que tu en fais.

@@ -1,21 +1,42 @@
-MIT License
+Licence Parallax — code source visible, sans modification
+Parallax License — Source-Available, No Derivatives
+Copyright (c) 2026 Zayfway
 
-Copyright (c) 2026 Parallax contributors
+------------------------------------------------------------------------------
+FRANÇAIS
+------------------------------------------------------------------------------
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Ce dépôt est « source visible ». Le code est publié pour être lu et vérifié,
+pas pour être modifié ni redistribué.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+Utiliser l'application compilée est libre et gratuit, pour tout le monde. Cette
+licence ne concerne que le CODE SOURCE de ce dépôt.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Tu AS le droit de :
+  - lire l'intégralité du code source ;
+  - cloner et compiler ce dépôt pour ton usage personnel ;
+  - t'en servir comme référence pour apprendre ou pour vérifier ce que fait
+    réellement l'application.
+
+Tu N'AS PAS le droit, sans l'autorisation écrite de l'auteur, de :
+  - modifier le code ou en créer une œuvre dérivée (fork modifié) ;
+  - redistribuer le code, modifié ou non, ni le republier ailleurs ;
+  - retirer ou altérer cet avis de licence.
+
+Les dépendances tierces (notamment `idevice` et `isideload`) restent régies
+par leurs propres licences respectives ; cette licence ne s'y substitue pas.
+
+LE LOGICIEL EST FOURNI « EN L'ÉTAT », SANS AUCUNE GARANTIE, EXPRESSE OU
+IMPLICITE. EN AUCUN CAS L'AUTEUR NE POURRA ÊTRE TENU RESPONSABLE D'UN QUELCONQUE
+DOMMAGE DÉCOULANT DU LOGICIEL OU DE SON UTILISATION.
+
+------------------------------------------------------------------------------
+ENGLISH (summary — the French text prevails)
+------------------------------------------------------------------------------
+
+This repository is source-available. You may read, clone and build the code for
+personal use and to verify what the application does. You may NOT modify it,
+create derivative works, or redistribute it, in whole or in part, without the
+author's written permission. Using the compiled application is free for everyone;
+this license covers the source code only. Third-party dependencies keep their own
+licenses. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
