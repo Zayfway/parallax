@@ -183,6 +183,15 @@ final class DeviceConnection: ObservableObject {
                     LogBridge.noteFromBackground(
                         "candidat : \(candidate.name) → \(candidate.host):\(candidate.port)"
                     )
+                    // Les TXT disent quelle version du protocole l'appareil
+                    // attend, et sous quelle identité il nous connaît. Quand
+                    // pair-verify échoue sans autre indice, c'est là qu'est la
+                    // réponse.
+                    if !candidate.txt.isEmpty {
+                        LogBridge.noteFromBackground("    txt : \(candidate.txtSummary)")
+                    } else {
+                        LogBridge.noteFromBackground("    txt : (aucun)")
+                    }
                 }
 
                 // Essai en série. Un autre appareil Apple du réseau annonce le
