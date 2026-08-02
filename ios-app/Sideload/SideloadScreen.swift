@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -259,28 +260,21 @@ struct SideloadScreen: View {
             guard installing, let last = lines.last else { return }
             absorb(last)
         }
-        // UN SEUL fileImporter : deux `.fileImporter` sur la même vue entrent en
-        // conflit dans SwiftUI (l'un ne rend jamais son résultat). On bascule le
-        // type de fichier selon ce qu'on importe.
-        .fileImporter(
-            isPresented: $showingImporter,
-            allowedContentTypes: importKind == .ipa
-                ? [UTType(filenameExtension: "ipa") ?? .data]
-                : [UTType(filenameExtension: "dylib") ?? .data],
-            allowsMultipleSelection: true
-        ) { result in
-            do {
-                let urls = try result.get()
-                switch importKind {
-                case .ipa:
-                    if let first = urls.first { try importIPA(first) }
-                case .dylib:
-                    for url in urls { try importDylib(url) }
-                }
-                failure = nil
-            } catch {
-                failure = error.localizedDescription
+        // Sélecteur UIKit (`UIDocumentPickerViewController`) plutôt que
+        // `.fileImporter` : sur cet appareil ce dernier ne rendait jamais son
+        // résultat (le fichier « ne se sélectionnait pas »). Avec `asCopy:true`,
+        // iOS copie le fichier dans notre bac à sable — pas d'accès sécurisé à
+        // gérer, et le callback du délégué est fiable.
+        .sheet(isPresented: $showingImporter) {
+            DocumentPicker(
+                contentTypes: importKind == .ipa
+                    ? [UTType(filenameExtension: "ipa") ?? .data]
+                    : [UTType(filenameExtension: "dylib") ?? .data],
+                allowsMultiple: importKind == .dylib
+            ) { urls in
+                handlePicked(urls)
             }
+            .ignoresSafeArea()
         }
         .safeAreaInset(edge: .bottom) {
             Button {
@@ -708,30 +702,41 @@ struct SideloadScreen: View {
         }
     }
 
-    /// Copie l'IPA choisi en zone temporaire (l'accès sécurisé ne survit pas au
-    /// callback du picker) et le retient comme source « Autre IPA ».
-    private func importIPA(_ src: URL) throws {
-        let dest = try copyIntoTemp(src)
-        withAnimation(PX.Motion.settle) {
-            customIPA = dest
-            customName = src.lastPathComponent
-            customURLText = ""
+    /// Reçoit les fichiers du sélecteur UIKit. Avec `asCopy:true`, iOS les a déjà
+    /// posés dans notre bac à sable (`Inbox`) : on n'a donc pas d'accès sécurisé
+    /// à ouvrir. On les recopie tout de même sous un nom propre en zone
+    /// temporaire, pour un chemin stable qui survit à l'installation.
+    private func handlePicked(_ urls: [URL]) {
+        showingImporter = false
+        guard !urls.isEmpty else { return }
+        do {
+            switch importKind {
+            case .ipa:
+                if let first = urls.first {
+                    let dest = try copyIntoTemp(first)
+                    withAnimation(PX.Motion.settle) {
+                        customIPA = dest
+                        customName = first.lastPathComponent
+                        customURLText = ""
+                    }
+                }
+            case .dylib:
+                for src in urls {
+                    let dest = try copyIntoTemp(src)
+                    if !tweaks.contains(dest) {
+                        withAnimation(PX.Motion.settle) { tweaks.append(dest) }
+                    }
+                }
+            }
+            failure = nil
+        } catch {
+            failure = error.localizedDescription
         }
     }
 
-    /// Copie un tweak choisi en zone temporaire et l'ajoute à la liste.
-    private func importDylib(_ src: URL) throws {
-        let dest = try copyIntoTemp(src)
-        if !tweaks.contains(dest) {
-            withAnimation(PX.Motion.settle) { tweaks.append(dest) }
-        }
-    }
-
+    /// Recopie un fichier livré par le sélecteur (déjà local grâce à `asCopy`)
+    /// sous un chemin temporaire stable et à nom propre.
     private func copyIntoTemp(_ src: URL) throws -> URL {
-        guard src.startAccessingSecurityScopedResource() else {
-            throw InstallError.badSource("accès au fichier refusé")
-        }
-        defer { src.stopAccessingSecurityScopedResource() }
         let dest = URL.temporaryDirectory.appending(path: src.lastPathComponent)
         try? FileManager.default.removeItem(at: dest)
         try FileManager.default.copyItem(at: src, to: dest)
@@ -794,6 +799,49 @@ struct SideloadScreen: View {
                 do { continuation.resume(returning: try work()) }
                 catch { continuation.resume(throwing: error) }
             }
+        }
+    }
+}
+
+// MARK: - Sélecteur de fichiers (UIKit)
+
+/// Enrobage de `UIDocumentPickerViewController`. On l'utilise à la place de
+/// `.fileImporter`, qui, sur l'appareil de l'auteur, ne renvoyait jamais le
+/// fichier choisi (« ça ne se sélectionne pas »).
+///
+/// `asCopy: true` demande à iOS de **copier** le fichier dans notre bac à sable
+/// avant de nous le rendre : plus besoin d'ouvrir un accès sécurisé (source
+/// classique d'échec silencieux), et l'URL reçue est directement lisible.
+struct DocumentPicker: UIViewControllerRepresentable {
+    let contentTypes: [UTType]
+    let allowsMultiple: Bool
+    let onPick: ([URL]) -> Void
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(
+            forOpeningContentTypes: contentTypes, asCopy: true
+        )
+        picker.allowsMultipleSelection = allowsMultiple
+        picker.shouldShowFileExtensions = true
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ controller: UIDocumentPickerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(onPick: onPick) }
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onPick: ([URL]) -> Void
+        init(onPick: @escaping ([URL]) -> Void) { self.onPick = onPick }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController,
+                            didPickDocumentsAt urls: [URL]) {
+            onPick(urls)
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            onPick([])
         }
     }
 }
