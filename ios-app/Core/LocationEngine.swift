@@ -37,13 +37,13 @@ final class LocationEngine: ObservableObject {
     enum Source: Equatable {
         case fixed(CLLocationCoordinate2D)
         case joystick(CLLocationCoordinate2D)
-        case track(GPXTrack, startedAt: Date)
+        case track(GPXTrack)
 
         static func == (a: Source, b: Source) -> Bool {
             switch (a, b) {
             case let (.fixed(l), .fixed(r)), let (.joystick(l), .joystick(r)):
                 return l.latitude == r.latitude && l.longitude == r.longitude
-            case let (.track(_, l), .track(_, r)):
+            case let (.track(l), .track(r)):
                 return l == r
             default:
                 return false
@@ -56,10 +56,21 @@ final class LocationEngine: ObservableObject {
     @Published private(set) var log: [String] = []
     /// Trace en cours de lecture, pour l'affichage. `nil` si aucune.
     @Published private(set) var playingTrack: GPXTrack?
+    /// Lecture GPX en pause : la position est figée, la session reste ouverte.
+    @Published private(set) var trackPaused = false
+    /// Avancement de la trace en cours, de 0 à 1. Alimente la barre du panneau.
+    @Published private(set) var trackProgress: Double = 0
+    /// Rejoue la trace en boucle. Modifiable pendant la lecture ; prend effet
+    /// au bout de la trace.
+    @Published var loopTrack = false
 
     private var session: OpaquePointer?
     private var pump: Task<Void, Never>?
     private var source: Source?
+    /// Départ de la trace en cours ; reculé à la reprise pour rattraper la pause.
+    private var trackStartedAt: Date = .now
+    /// Non-nil ⟺ en pause : temps écoulé figé au moment de la mise en pause.
+    private var trackPausedElapsed: TimeInterval?
 
     private let connection: DeviceConnection
 
@@ -102,6 +113,9 @@ final class LocationEngine: ObservableObject {
         pump = nil
         source = nil
         playingTrack = nil
+        trackPaused = false
+        trackPausedElapsed = nil
+        trackProgress = 0
 
         if let session {
             // clear() avant close() : rendre le GPS réel explicitement plutôt que
@@ -133,8 +147,30 @@ final class LocationEngine: ObservableObject {
 
     func play(track: GPXTrack) {
         playingTrack = track
-        source = .track(track, startedAt: .now)
+        trackStartedAt = .now
+        trackPausedElapsed = nil
+        trackPaused = false
+        trackProgress = 0
+        source = .track(track)
         note("lecture GPX : \(track.points.count) points, \(Int(track.duration))s")
+    }
+
+    /// Fige la lecture sans fermer la session : reprendre doit être instantané.
+    func pauseTrack() {
+        guard case .track = source, !trackPaused else { return }
+        trackPausedElapsed = Date.now.timeIntervalSince(trackStartedAt)
+        trackPaused = true
+        note("lecture GPX en pause")
+    }
+
+    /// Reprend là où la pause s'était arrêtée, en reculant le départ d'autant.
+    func resumeTrack() {
+        guard case .track = source, trackPaused,
+              let elapsed = trackPausedElapsed else { return }
+        trackStartedAt = Date.now.addingTimeInterval(-elapsed)
+        trackPausedElapsed = nil
+        trackPaused = false
+        note("lecture GPX reprise")
     }
 
     /// Arrête la lecture GPX et fige la position courante.
@@ -142,6 +178,9 @@ final class LocationEngine: ObservableObject {
     /// obligerait à tout relancer, ce qui n'est jamais ce qu'on veut.
     func stopTrack() {
         playingTrack = nil
+        trackPaused = false
+        trackPausedElapsed = nil
+        trackProgress = 0
         if let fix = currentFix { source = .fixed(fix) }
         note("lecture GPX arrêtée")
     }
@@ -251,20 +290,40 @@ final class LocationEngine: ObservableObject {
         switch source {
         case .fixed(let c), .joystick(let c):
             target = c
-        case .track(let track, let startedAt):
-            let elapsed = Date.now.timeIntervalSince(startedAt)
-            guard let c = track.coordinate(atElapsed: elapsed) else {
-                await MainActor.run { self.note("fin de la trace GPX"); self.playingTrack = nil }
-                self.source = .fixed(currentFix ?? track.points.last!.coordinate)
-                return true
+        case .track(let track):
+            let duration = max(track.duration, 0.001)
+            if let paused = trackPausedElapsed {
+                // En pause : position figée, session maintenue vivante.
+                target = track.coordinate(atElapsed: paused)
+                    ?? currentFix ?? track.points.first?.coordinate ?? track.points.last!.coordinate
+                trackProgress = min(1, max(0, paused / duration))
+            } else {
+                let elapsed = Date.now.timeIntervalSince(trackStartedAt)
+                if let c = track.coordinate(atElapsed: elapsed) {
+                    target = c
+                    trackProgress = min(1, max(0, elapsed / duration))
+                } else if loopTrack {
+                    // Reboucle sans couper la session : le trajet reprend au départ.
+                    trackStartedAt = .now
+                    trackProgress = 0
+                    note("trace rejouée en boucle")
+                    target = track.points.first?.coordinate
+                        ?? currentFix ?? track.points.last!.coordinate
+                } else {
+                    note("fin de la trace GPX")
+                    playingTrack = nil
+                    trackProgress = 1
+                    let last = currentFix ?? track.points.last!.coordinate
+                    source = .fixed(last)
+                    target = last
+                }
             }
-            target = c
         }
 
         let rc = px_location_set(session, target.latitude, target.longitude)
         guard rc == PX_OK else { return false }
 
-        await MainActor.run { self.currentFix = target }
+        currentFix = target
         return true
     }
 

@@ -20,6 +20,8 @@ struct RootView: View {
     /// Une seule session Apple pour toute l'app : la carte de connexion et
     /// l'écran Certificats la partagent, au lieu d'ouvrir deux connexions.
     @StateObject private var account = AppleAccountModel()
+    /// Carnet de lieux enregistrés, partagé par la carte.
+    @StateObject private var favorites = FavoritesStore()
 
     /// Le lancement n'est joué qu'une fois par ouverture, jamais rejoué sur un
     /// simple retour au premier plan : une animation qu'on revoit trop souvent
@@ -68,6 +70,7 @@ struct RootView: View {
         .environmentObject(pairing)
         .environmentObject(location)
         .environmentObject(account)
+        .environmentObject(favorites)
         .tint(live ? PX.Color.signal : PX.Color.azimuth)
         .animation(PX.Motion.settle, value: live)
         .task {

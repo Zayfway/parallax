@@ -34,6 +34,7 @@ import UniformTypeIdentifiers
 struct MapScreen: View {
 
     @EnvironmentObject private var engine: LocationEngine
+    @EnvironmentObject private var favorites: FavoritesStore
 
     @State private var camera: MapCameraPosition = .automatic
     @State private var style: MapStyleChoice = .standard
@@ -42,6 +43,7 @@ struct MapScreen: View {
     @State private var importError: String?
     @State private var fixCount = 0
     @State private var shown = false
+    @State private var showingFavorites = false
 
     // ── Itinéraire ────────────────────────────────────────────────────────
     @State private var routeDestination: CLLocationCoordinate2D?
@@ -69,6 +71,13 @@ struct MapScreen: View {
             Button("OK") { importError = nil }
         } message: {
             Text(importError ?? "")
+        }
+        .sheet(isPresented: $showingFavorites) {
+            FavoritesSheet(store: favorites, currentFix: engine.currentFix) { coordinate in
+                Task { await activate(at: coordinate) }
+                fixCount += 1
+                showingFavorites = false
+            }
         }
         // Le fix acquis se sent avant de se voir.
         .sensoryFeedback(.success, trigger: fixCount)
@@ -293,33 +302,98 @@ struct MapScreen: View {
         }
     }
 
+    /// Un trajet en cours n'est plus une carte figée avec un seul bouton stop :
+    /// on voit où on en est, on met en pause, on reboucle. La barre d'avancement
+    /// est en ambre — c'est la seule couleur qui a le droit d'exister ici, et le
+    /// trajet EST une position simulée active.
     private func trackCard(_ track: GPXTrack) -> some View {
-        HStack(spacing: PX.Space.snug) {
-            Image(systemName: "point.topleft.down.to.point.bottomright.curvepath.fill")
-                .font(.system(size: 15))
-                .foregroundStyle(PX.Color.signal)
+        VStack(alignment: .leading, spacing: PX.Space.snug) {
+            HStack(spacing: PX.Space.snug) {
+                Image(systemName: "point.topleft.down.to.point.bottomright.curvepath.fill")
+                    .font(.system(size: 15))
+                    .foregroundStyle(PX.Color.signal)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(track.name)
-                    .font(PX.Font.display(13.5, .semibold))
-                    .foregroundStyle(PX.Color.ink)
-                Text("\(track.points.count) points · \(Int(track.duration)) s")
-                    .font(PX.Font.mono(11))
-                    .foregroundStyle(PX.Color.inkMuted)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(track.name)
+                        .font(PX.Font.display(13.5, .semibold))
+                        .foregroundStyle(PX.Color.ink)
+                        .lineLimit(1)
+                    Text("\(track.points.count) points · \(Int(track.duration)) s")
+                        .font(PX.Font.mono(11))
+                        .foregroundStyle(PX.Color.inkMuted)
+                }
+
+                Spacer(minLength: 0)
+
+                if engine.trackPaused {
+                    Text("EN PAUSE")
+                        .font(PX.Font.mono(9, .semibold))
+                        .tracking(0.8)
+                        .foregroundStyle(PX.Color.inkFaint)
+                        .transition(.opacity)
+                }
             }
 
-            Spacer()
-
-            Button {
-                engine.stopTrack()
-            } label: {
-                Image(systemName: "stop.fill").font(.system(size: 13))
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(PX.Color.night.opacity(0.55))
+                    Capsule()
+                        .fill(PX.Color.signal)
+                        .frame(width: geometry.size.width * CGFloat(engine.trackProgress))
+                        .signalGlow(true, radius: 8)
+                }
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(PX.Color.inkMuted)
+            .frame(height: 4)
+            .animation(PX.Motion.settle, value: engine.trackProgress)
+
+            HStack(spacing: PX.Space.tight) {
+                trackControl(icon: "repeat", label: "Boucle", active: engine.loopTrack) {
+                    withAnimation(PX.Motion.tap) { engine.loopTrack.toggle() }
+                }
+                trackControl(
+                    icon: engine.trackPaused ? "play.fill" : "pause.fill",
+                    label: engine.trackPaused ? "Reprendre" : "Pause",
+                    active: false
+                ) {
+                    withAnimation(PX.Motion.tap) {
+                        if engine.trackPaused { engine.resumeTrack() } else { engine.pauseTrack() }
+                    }
+                }
+                trackControl(icon: "stop.fill", label: "Arrêter", active: false,
+                             tint: PX.Color.alert) {
+                    engine.stopTrack()
+                }
+            }
         }
         .padding(PX.Space.base)
         .glassCard()
+        .sensoryFeedback(.selection, trigger: engine.trackPaused)
+    }
+
+    /// Pastille de contrôle de lecture. Neutre au repos, teintée quand elle
+    /// porte un état actif (la boucle) ou un avertissement (l'arrêt).
+    private func trackControl(
+        icon: String, label: String, active: Bool,
+        tint: Color = PX.Color.azimuth, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: icon).font(.system(size: 12, weight: .semibold))
+                Text(label).font(PX.Font.display(12, .semibold))
+            }
+            .foregroundStyle(active ? tint : PX.Color.inkMuted)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: PX.Radius.chip, style: .continuous)
+                    .fill(active ? tint.opacity(0.14) : Color.white.opacity(0.05))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: PX.Radius.chip, style: .continuous)
+                    .strokeBorder(active ? tint.opacity(0.4) : PX.Color.horizon, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private var toolbar: some View {
@@ -357,6 +431,14 @@ struct MapScreen: View {
                 .foregroundStyle(routeMode ? PX.Color.azimuth : PX.Color.inkMuted)
                 .padding(.horizontal, 6)
             }
+
+            Button { showingFavorites = true } label: {
+                Image(systemName: favorites.places.isEmpty ? "star" : "star.fill")
+                    .font(.system(size: 15))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(favorites.places.isEmpty ? PX.Color.inkMuted : PX.Color.azimuth)
+            .padding(.horizontal, 6)
 
             Button { showingImporter = true } label: {
                 Image(systemName: "arrow.down.doc").font(.system(size: 15))
@@ -463,6 +545,151 @@ private struct DropConfirmation: View {
         }
         .padding(PX.Space.base)
         .glassCard(emphasis: true)
+    }
+}
+
+// MARK: - Favoris
+
+/// Le carnet de lieux. On enregistre la position courante, on rappelle un lieu
+/// d'un geste. Construit en verre plutôt qu'en `List` système : une liste native
+/// jurerait avec le reste, et un rappel n'a pas besoin de swipe — un bouton
+/// explicite est plus clair au pouce.
+private struct FavoritesSheet: View {
+    @ObservedObject var store: FavoritesStore
+    let currentFix: CLLocationCoordinate2D?
+    let onSelect: (CLLocationCoordinate2D) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var newName = ""
+    @FocusState private var naming: Bool
+
+    var body: some View {
+        ZStack {
+            PX.Color.canvas
+            ScrollView {
+                VStack(alignment: .leading, spacing: PX.Space.snug) {
+                    header
+                    if currentFix != nil { saveCard }
+                    if store.places.isEmpty {
+                        emptyState
+                    } else {
+                        SectionLabel("Enregistrés")
+                            .padding(.top, PX.Space.tight)
+                        ForEach(store.places) { placeRow($0) }
+                    }
+                }
+                .padding(PX.Space.base)
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationBackground(.clear)
+        .presentationCornerRadius(PX.Radius.sheet)
+    }
+
+    private var header: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Lieux")
+                    .font(PX.Font.display(24, .heavy))
+                    .foregroundStyle(PX.Color.ink)
+                Text("Enregistre une position, retrouve-la d'un geste.")
+                    .font(PX.Font.body(12.5))
+                    .foregroundStyle(PX.Color.inkMuted)
+            }
+            Spacer()
+            Button { dismiss() } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(PX.Color.inkMuted)
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(.white.opacity(0.06)))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private var saveCard: some View {
+        VStack(alignment: .leading, spacing: PX.Space.snug) {
+            SectionLabel("Position actuelle")
+            if let fix = currentFix {
+                Text(String(format: "%+.5f · %+.5f", fix.latitude, fix.longitude))
+                    .font(PX.Font.mono(12.5))
+                    .foregroundStyle(PX.Color.signal)
+            }
+            TextField("", text: $newName)
+                .focused($naming)
+                .field("Nom du lieu")
+            Button {
+                guard let fix = currentFix else { return }
+                store.add(name: newName, coordinate: fix)
+                newName = ""
+                naming = false
+            } label: {
+                Text("Enregistrer ici")
+            }
+            .buttonStyle(ProminentButtonStyle())
+        }
+        .padding(PX.Space.base)
+        .glassCard(emphasis: true)
+    }
+
+    private func placeRow(_ place: FavoritesStore.Place) -> some View {
+        HStack(spacing: PX.Space.snug) {
+            Image(systemName: "mappin.circle.fill")
+                .font(.system(size: 22))
+                .foregroundStyle(PX.Color.azimuth)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(place.name)
+                    .font(PX.Font.display(14, .semibold))
+                    .foregroundStyle(PX.Color.ink)
+                    .lineLimit(1)
+                Text(place.coordinateLabel)
+                    .font(PX.Font.mono(11))
+                    .foregroundStyle(PX.Color.inkMuted)
+            }
+
+            Spacer(minLength: 0)
+
+            Button { store.remove(place) } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 13))
+                    .foregroundStyle(PX.Color.inkFaint)
+                    .frame(width: 34, height: 34)
+            }
+            .buttonStyle(.plain)
+
+            Button { onSelect(place.coordinate) } label: {
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(PX.Color.azimuth))
+                    .shadow(color: PX.Color.azimuth.opacity(0.4), radius: 8, y: 3)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(PX.Space.snug)
+        .glassCard(radius: PX.Radius.control)
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: PX.Space.snug) {
+            Image(systemName: "mappin.slash")
+                .font(.system(size: 30))
+                .foregroundStyle(PX.Color.inkFaint)
+            Text("Aucun lieu enregistré")
+                .font(PX.Font.display(15, .semibold))
+                .foregroundStyle(PX.Color.inkMuted)
+            Text(currentFix == nil
+                 ? "Pose d'abord un point sur la carte, puis reviens l'enregistrer."
+                 : "Enregistre la position actuelle ci-dessus.")
+                .font(PX.Font.body(12.5))
+                .foregroundStyle(PX.Color.inkFaint)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, PX.Space.wide)
     }
 }
 
