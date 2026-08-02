@@ -438,6 +438,35 @@ struct Tag: View {
     }
 }
 
+/// Tuile d'icône, carré arrondi façon icône d'app (Feather, Réglages iOS).
+/// Remplace le rond des bandeaux d'état : plus dense, plus « produit », et le
+/// coin arrondi continu rime avec le reste de la géométrie.
+struct IconTile: View {
+    let system: String
+    var tint: Color = PX.Color.azimuth
+    var size: CGFloat = 44
+
+    var body: some View {
+        Image(systemName: system)
+            .font(.system(size: size * 0.42, weight: .semibold))
+            .foregroundStyle(tint)
+            .frame(width: size, height: size)
+            .background(
+                RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [tint.opacity(0.22), tint.opacity(0.12)],
+                            startPoint: .top, endPoint: .bottom
+                        )
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+                    .strokeBorder(tint.opacity(0.30), lineWidth: 1)
+            )
+    }
+}
+
 // MARK: - Élément signature
 
 /// La bande d'instruments.

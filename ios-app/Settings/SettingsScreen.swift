@@ -151,14 +151,7 @@ struct SettingsScreen: View {
     /// Le seul élément coloré, comme sur les trois autres écrans.
     private var statusBanner: some View {
         HStack(spacing: PX.Space.snug) {
-            ZStack {
-                Circle()
-                    .fill(phase.tint.opacity(0.16))
-                    .frame(width: 42, height: 42)
-                Image(systemName: phase.icon)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(phase.tint)
-            }
+            IconTile(system: phase.icon, tint: phase.tint)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(phase.label)

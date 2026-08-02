@@ -332,7 +332,7 @@ struct PairingScreen: View {
                     .foregroundStyle(PX.Color.ink)
                     .contentTransition(.opacity)
                 Text(subtitle)
-                    .font(PX.Font.mono(11))
+                    .font(PX.Font.body(12))
                     .foregroundStyle(PX.Color.inkMuted)
                     .contentTransition(.opacity)
             }

@@ -109,14 +109,7 @@ struct CertificatesScreen: View {
     /// Le seul élément qui change de couleur, comme sur les deux autres écrans.
     private var statusBanner: some View {
         HStack(spacing: PX.Space.snug) {
-            ZStack {
-                Circle()
-                    .fill(phase.tint.opacity(0.16))
-                    .frame(width: 42, height: 42)
-                Image(systemName: phase.icon)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(phase.tint)
-            }
+            IconTile(system: phase.icon, tint: phase.tint)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(phase.label)

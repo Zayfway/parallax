@@ -300,12 +300,7 @@ struct SideloadScreen: View {
                                icon: "checkmark.seal.fill",
                                trigger: doneCount)
                 } else {
-                    Circle()
-                        .fill(phase.tint.opacity(0.16))
-                        .frame(width: 42, height: 42)
-                    Image(systemName: phase.icon)
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(phase.tint)
+                    IconTile(system: phase.icon, tint: phase.tint)
                 }
             }
             .frame(width: 58, height: 58)
