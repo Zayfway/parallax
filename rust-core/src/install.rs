@@ -122,6 +122,7 @@ mod imp {
     use crate::tunnel::PxTunnel;
     use isideload::dev::devices::DevicesApi;
     use std::ffi::CString;
+    use std::path::Path;
 
     /// Étape franchie, poussée à Swift avec la progression. Les bornes de
     /// pourcentage sont arbitraires mais monotones : une barre qui recule est
@@ -131,6 +132,81 @@ mod imp {
         if let Ok(c) = CString::new(label) {
             cb(percent, c.as_ptr());
         }
+    }
+
+    /// Zippe le dossier `Payload` en un IPA en mémoire.
+    ///
+    /// Sans compression, délibérément : le transfert est local, par le tunnel,
+    /// et compresser un bundle de plusieurs dizaines de mégaoctets coûterait
+    /// plus de temps processeur qu'il n'en ferait gagner en transfert.
+    ///
+    /// Les permissions Unix sont reportées telles quelles — l'exécutable
+    /// principal doit rester exécutable, sinon `installd` refuse le paquet.
+    fn zip_payload(payload: &Path) -> Result<Vec<u8>, String> {
+        use std::io::{Cursor, Write};
+        use zip::write::SimpleFileOptions;
+
+        let root = payload
+            .parent()
+            .ok_or_else(|| "Payload sans parent".to_string())?;
+
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::<u8>::new()));
+        let mut stack = vec![payload.to_path_buf()];
+
+        while let Some(dir) = stack.pop() {
+            let entries = std::fs::read_dir(&dir)
+                .map_err(|e| format!("lecture de {} : {e}", dir.display()))?;
+
+            for entry in entries {
+                let entry = entry.map_err(|e| format!("entree illisible : {e}"))?;
+                let path = entry.path();
+                let name = path
+                    .strip_prefix(root)
+                    .map_err(|e| format!("chemin hors Payload : {e}"))?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+
+                let meta = std::fs::symlink_metadata(&path)
+                    .map_err(|e| format!("metadonnees de {} : {e}", path.display()))?;
+
+                if meta.is_dir() {
+                    writer
+                        .add_directory(format!("{name}/"), SimpleFileOptions::default())
+                        .map_err(|e| format!("zip dossier {name} : {e}"))?;
+                    stack.push(path);
+                    continue;
+                }
+
+                // Les liens symboliques existent dans certains bundles ; les
+                // suivre dupliquerait le contenu et casserait la signature.
+                if meta.file_type().is_symlink() {
+                    let target = std::fs::read_link(&path)
+                        .map_err(|e| format!("lien {} : {e}", path.display()))?;
+                    writer
+                        .add_symlink(&name, target.to_string_lossy(), SimpleFileOptions::default())
+                        .map_err(|e| format!("zip lien {name} : {e}"))?;
+                    continue;
+                }
+
+                use std::os::unix::fs::PermissionsExt;
+                let options = SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Stored)
+                    .unix_permissions(meta.permissions().mode())
+                    .large_file(true);
+
+                writer
+                    .start_file(&name, options)
+                    .map_err(|e| format!("zip fichier {name} : {e}"))?;
+                let bytes = std::fs::read(&path)
+                    .map_err(|e| format!("lecture de {} : {e}", path.display()))?;
+                writer
+                    .write_all(&bytes)
+                    .map_err(|e| format!("ecriture de {name} : {e}"))?;
+            }
+        }
+
+        let cursor = writer.finish().map_err(|e| format!("cloture du zip : {e}"))?;
+        Ok(cursor.into_inner())
     }
 
     pub unsafe fn install(
@@ -173,16 +249,36 @@ mod imp {
             tracing::info!("application reconnue : {special_name}");
         }
 
-        // ── 3 et 4. Transfert AFC puis installation ───────────────────────
+        // ── 3. Reconstitution de l'IPA ────────────────────────────────────
+        //
+        // `sign_app` rend un **dossier** `.app`. Et c'est précisément là qu'un
+        // piège se cache : `install_package_with_callback_rsd`, pour un
+        // dossier, appelle `upgrade_with_callback` et non
+        // `install_with_callback` (utils/installation/mod.rs:107). On demande
+        // alors à `installd` de *mettre à jour* une app qui n'est pas
+        // installée — l'appel rend `Ok`, et rien n'apparaît sur l'écran
+        // d'accueil. AltStore, SideStore et isideload utilisent tous `Install`.
+        //
+        // Le chemin `install_bytes_with_callback_rsd`, lui, appelle bien
+        // `install_with_callback`. Il prend des octets d'IPA, d'où ce
+        // rezippage du dossier `Payload` produit par la signature.
+        step(on_progress, 35, "Préparation du paquet");
+        let payload = signed_path
+            .parent()
+            .ok_or_else(|| "bundle signé sans dossier Payload".to_string())?;
+        let ipa = zip_payload(payload)?;
+        tracing::info!("IPA reconstitué : {} octets", ipa.len());
+
+        // ── 4. Transfert AFC puis installation ────────────────────────────
         // Sur le runtime du TUNNEL : c'est lui qui fait tourner les tâches de
         // fond de la pile TCP, et l'adaptateur ne se pilote que de là.
         step(on_progress, 40, "Transfert vers l'appareil");
 
         let result = tun.runtime.block_on(async {
-            idevice::utils::installation::install_package_with_callback_rsd(
+            idevice::utils::installation::install_bytes_with_callback_rsd(
                 &mut tun.adapter,
                 &mut tun.rsd,
-                &signed_path,
+                &ipa,
                 // `None` : le helper pose lui-même PackageType = Developer.
                 // Le renseigner nous obligerait à dépendre de `plist`, qu'idevice
                 // ne réexporte pas.
@@ -202,9 +298,7 @@ mod imp {
 
         // Le bundle signé est volumineux et ne resservira pas : on le retire,
         // que l'installation ait abouti ou non.
-        if let Some(dir) = signed_path.parent() {
-            let _ = std::fs::remove_dir_all(dir);
-        }
+        let _ = std::fs::remove_dir_all(payload);
 
         result.map_err(|e| format!("installation : {e}"))?;
 
