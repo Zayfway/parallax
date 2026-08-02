@@ -51,16 +51,30 @@ enum PX {
         static let inkMuted = SwiftUI.Color(hex: 0x9AA3C4)
         static let inkFaint = SwiftUI.Color(hex: 0x5A6488)
 
-        /// Fond d'écran : dégradé radial haut + voile nocturne.
-        /// Donne au verre quelque chose à réfracter, sinon tout le système
-        /// s'aplatit.
+        /// Fond d'écran : trois couches qui donnent de la profondeur au champ,
+        /// sans couleur franche. Sans elles, le verre n'a rien à réfracter et
+        /// tout le système s'aplatit en gris.
+        ///
+        ///   1. halo haut indigo  → la source de lumière, en haut de l'écran
+        ///   2. lueur basse       → pervenche très diffuse, pour que le regard
+        ///                          ne tombe pas dans du noir plat en bas
+        ///   3. vignette douce    → resserre l'attention vers le centre
         static var canvas: some View {
             ZStack {
                 night
                 RadialGradient(
-                    colors: [SwiftUI.Color(hex: 0x1D2447).opacity(0.9), .clear],
+                    colors: [SwiftUI.Color(hex: 0x1D2447).opacity(0.95), .clear],
                     center: .init(x: 0.5, y: -0.1),
-                    startRadius: 0, endRadius: 620
+                    startRadius: 0, endRadius: 640
+                )
+                RadialGradient(
+                    colors: [azimuth.opacity(0.10), .clear],
+                    center: .init(x: 0.5, y: 1.08),
+                    startRadius: 0, endRadius: 520
+                )
+                RadialGradient(
+                    colors: [.clear, SwiftUI.Color.black.opacity(0.28)],
+                    center: .center, startRadius: 250, endRadius: 720
                 )
             }
             .ignoresSafeArea()
