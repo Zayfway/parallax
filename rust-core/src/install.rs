@@ -73,6 +73,9 @@ pub unsafe extern "C" fn px_install_ipa(
     device_name: *const c_char,
     dylib_paths: *const *const c_char,
     dylib_count: usize,
+    injection_path: *const c_char,
+    injection_folder: *const c_char,
+    inject_into_extensions: bool,
     on_progress: PxProgressCallback,
 ) -> *mut c_char {
     clear_last_error();
@@ -104,10 +107,17 @@ pub unsafe extern "C" fn px_install_ipa(
             .collect()
     };
 
+    // Options d'injection façon Feather ; valeurs par défaut si non fournies.
+    let inject_path = cstr(injection_path).unwrap_or_default();
+    let inject_folder = cstr(injection_folder).unwrap_or_default();
+
     #[cfg(all(feature = "device-account", feature = "device-pairing"))]
     {
         guard("px_install_ipa", ptr::null_mut(), || {
-            match imp::install(session, tunnel, &ipa, &udid, &name, &dylibs, on_progress) {
+            match imp::install(
+                session, tunnel, &ipa, &udid, &name, &dylibs,
+                &inject_path, &inject_folder, inject_into_extensions, on_progress,
+            ) {
                 Ok(special) => CString::new(special)
                     .map(|c| c.into_raw())
                     .unwrap_or(ptr::null_mut()),
@@ -120,7 +130,8 @@ pub unsafe extern "C" fn px_install_ipa(
     }
     #[cfg(not(all(feature = "device-account", feature = "device-pairing")))]
     {
-        let _ = (ipa, udid, name, dylibs, on_progress);
+        let _ = (ipa, udid, name, dylibs, inject_path, inject_folder,
+                 inject_into_extensions, on_progress);
         set_last_error(
             "px_install_ipa : compilé sans --features device-account,device-pairing",
         );
@@ -222,6 +233,7 @@ mod imp {
         Ok(cursor.into_inner())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub unsafe fn install(
         session: *mut PxSignSession,
         tunnel: *mut PxTunnel,
@@ -229,6 +241,9 @@ mod imp {
         udid: &str,
         device_name: &str,
         dylibs: &[String],
+        inject_path: &str,
+        inject_folder: &str,
+        inject_into_extensions: bool,
         on_progress: PxProgressCallback,
     ) -> Result<String, String> {
         let sign = crate::account::session_inner(session);
@@ -258,7 +273,15 @@ mod imp {
             ipa.to_string()
         } else {
             step(on_progress, 12, "Injection des tweaks");
-            crate::inject::inject_dylibs(ipa, dylibs)?
+            let mut opts = crate::inject::InjectOptions::default();
+            if !inject_path.is_empty() {
+                opts.path_prefix = inject_path.to_string();
+            }
+            if !inject_folder.is_empty() {
+                opts.folder = inject_folder.to_string();
+            }
+            opts.into_extensions = inject_into_extensions;
+            crate::inject::inject_dylibs(ipa, dylibs, &opts)?
         };
 
         // ── 2. Signature ──────────────────────────────────────────────────

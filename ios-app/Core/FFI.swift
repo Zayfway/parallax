@@ -109,7 +109,10 @@ extension FFI {
         tunnel: OpaquePointer,
         ipaPath: String,
         device: PairedDevice,
-        dylibs: [String] = []
+        dylibs: [String] = [],
+        injectionPath: String = "@executable_path",
+        injectionFolder: String = "Frameworks",
+        injectIntoExtensions: Bool = false
     ) throws -> String {
         // Tableau de C-strings pour les tweaks à injecter. strdup + free : plus
         // simple qu'un withCString imbriqué de longueur variable. Vide = aucune
@@ -121,12 +124,17 @@ extension FFI {
         let raw = ipaPath.withCString { ipa in
             device.udid.withCString { udid in
                 device.name.withCString { name in
-                    ptrs.withUnsafeBufferPointer { buf in
-                        px_install_ipa(
-                            session, tunnel, ipa, udid, name,
-                            buf.baseAddress, UInt(dylibs.count),
-                            pxInstallProgress
-                        )
+                    injectionPath.withCString { ipath in
+                        injectionFolder.withCString { ifolder in
+                            ptrs.withUnsafeBufferPointer { buf in
+                                px_install_ipa(
+                                    session, tunnel, ipa, udid, name,
+                                    buf.baseAddress, UInt(dylibs.count),
+                                    ipath, ifolder, injectIntoExtensions,
+                                    pxInstallProgress
+                                )
+                            }
+                        }
                     }
                 }
             }

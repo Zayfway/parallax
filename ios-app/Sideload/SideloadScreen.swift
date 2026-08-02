@@ -73,6 +73,13 @@ struct SideloadScreen: View {
     @State private var modifyOpen = true
     @State private var tweaksOpen = false
     @State private var frameworksOpen = false
+    /// Options d'injection façon Feather (écran Tweaks de la capture).
+    @State private var injectionPath = "@executable_path"
+    @State private var injectionFolder = "Frameworks"
+    @State private var injectExtensions = false
+
+    private let injectionPaths = ["@executable_path", "@loader_path", "@rpath"]
+    private let injectionFolders = ["Frameworks", "Dylibs", "Tweaks"]
 
     enum InstallTarget: String, CaseIterable {
         case sideStore = "SideStore"
@@ -640,6 +647,66 @@ struct SideloadScreen: View {
                 }
             }
 
+            // ── Injection (réglages fins, façon Feather) ──
+            Text("Injection")
+                .font(PX.Font.display(20, .heavy))
+                .tracking(-0.2)
+                .foregroundStyle(PX.Color.ink)
+                .padding(.top, PX.Space.hair)
+
+            insetGroup {
+                Menu {
+                    ForEach(injectionPaths, id: \.self) { path in
+                        Button {
+                            injectionPath = path
+                        } label: {
+                            if path == injectionPath {
+                                Label(path, systemImage: "checkmark")
+                            } else {
+                                Text(path)
+                            }
+                        }
+                    }
+                } label: {
+                    row(icon: "curlybraces", title: "Injection Path",
+                        subtitle: injectionPath, trailing: upDown)
+                }
+
+                rowDivider
+
+                Menu {
+                    ForEach(injectionFolders, id: \.self) { folder in
+                        Button {
+                            injectionFolder = folder
+                        } label: {
+                            if folder == injectionFolder {
+                                Label(folder, systemImage: "checkmark")
+                            } else {
+                                Text(folder)
+                            }
+                        }
+                    }
+                } label: {
+                    row(icon: "folder.fill", title: "Injection Folder",
+                        subtitle: "/\(injectionFolder)/", trailing: upDown)
+                }
+
+                rowDivider
+
+                HStack(spacing: PX.Space.snug) {
+                    IconTile(system: "syringe.fill", size: 32)
+                    Text("Inject into Extensions")
+                        .font(PX.Font.display(14.5, .semibold))
+                        .foregroundStyle(PX.Color.ink)
+                    Spacer(minLength: PX.Space.tight)
+                    Toggle("", isOn: $injectExtensions)
+                        .labelsHidden()
+                        .tint(PX.Color.azimuth)
+                }
+                .padding(.horizontal, PX.Space.base)
+                .padding(.vertical, 9)
+            }
+
             Text("Tweaks et frameworks sont injectés avant signature. Un .deb complet : la Substrate est réécrite vers ElleKit et les dépendances embarquées (paliers 1-2-3). Ajoute ElleKit (.deb) si un tweak en dépend.")
                 .font(PX.Font.body(11))
                 .foregroundStyle(PX.Color.inkFaint)
@@ -720,6 +787,13 @@ struct SideloadScreen: View {
             .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(PX.Color.inkFaint)
             .rotationEffect(.degrees(open ? 90 : 0))
+    }
+
+    /// Accessoire d'une ligne à menu (« ⌄⌃ »), comme les sélecteurs de Feather.
+    private var upDown: some View {
+        Image(systemName: "chevron.up.chevron.down")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(PX.Color.inkFaint)
     }
 
     @ViewBuilder
@@ -832,7 +906,10 @@ struct SideloadScreen: View {
             let special = try await onBackground {
                 try FFI.installIPA(
                     session: session, tunnel: tunnel,
-                    ipaPath: ipa.path, device: device, dylibs: dylibs
+                    ipaPath: ipa.path, device: device, dylibs: dylibs,
+                    injectionPath: injectionPath,
+                    injectionFolder: injectionFolder,
+                    injectIntoExtensions: injectExtensions
                 )
             }
             installed = special.isEmpty ? installedLabel : special

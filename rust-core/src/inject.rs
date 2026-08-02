@@ -56,13 +56,80 @@ enum Kind {
     Dependency,
 }
 
+/// Options d'injection, façon Feather.
+///
+/// - `path_prefix` : le préfixe du `LC_LOAD_DYLIB` — `@executable_path`,
+///   `@loader_path` ou `@rpath`. `@executable_path` par défaut, le plus sûr.
+/// - `folder` : le dossier où poser les dylibs dans le bundle (`Frameworks`).
+/// - `into_extensions` : injecter aussi dans chaque extension (`PlugIns/*.appex`),
+///   en visant le dossier partagé du bundle par un chemin relatif.
+pub struct InjectOptions {
+    pub path_prefix: String,
+    pub folder: String,
+    pub into_extensions: bool,
+}
+
+impl Default for InjectOptions {
+    fn default() -> Self {
+        Self {
+            path_prefix: "@executable_path".to_string(),
+            folder: "Frameworks".to_string(),
+            into_extensions: false,
+        }
+    }
+}
+
+impl InjectOptions {
+    /// Nettoie les entrées : préfixe connu, dossier non vide sans slash parasite.
+    fn normalized(mut self) -> Self {
+        let p = self.path_prefix.trim();
+        self.path_prefix = match p {
+            "@rpath" | "@loader_path" | "@executable_path" => p.to_string(),
+            _ => "@executable_path".to_string(),
+        };
+        let f = self.folder.trim().trim_matches('/');
+        self.folder = if f.is_empty() { "Frameworks".to_string() } else { f.to_string() };
+        self
+    }
+
+    /// Chemin qui, depuis un binaire donné, atteint le dossier d'injection.
+    /// Depuis l'exécutable principal : `@executable_path/<folder>`. Depuis une
+    /// extension (`PlugIns/X.appex/`), il faut remonter de deux crans.
+    fn reach(&self, is_extension: bool) -> String {
+        let up = if is_extension { "/../.." } else { "" };
+        format!("@executable_path{up}/{}", self.folder)
+    }
+
+    /// Chemin de chargement écrit dans le `LC_LOAD_DYLIB` pour `name`.
+    fn load_path(&self, name: &str, is_extension: bool) -> String {
+        if self.path_prefix == "@rpath" {
+            format!("@rpath/{name}")
+        } else {
+            let up = if is_extension { "/../.." } else { "" };
+            format!("{}{up}/{}/{}", self.path_prefix, self.folder, name)
+        }
+    }
+}
+
 /// Injecte chaque entrée dans l'IPA et rend le chemin d'un **nouvel** IPA
 /// modifié, prêt à être signé. Chaque entrée est un `.dylib` (palier 1) ou un
 /// `.deb` (palier 2/3). Si `inputs` est vide, rend l'IPA d'origine.
-pub fn inject_dylibs(ipa_path: &str, inputs: &[String]) -> Result<String, String> {
+pub fn inject_dylibs(
+    ipa_path: &str,
+    inputs: &[String],
+    opts: &InjectOptions,
+) -> Result<String, String> {
     if inputs.is_empty() {
         return Ok(ipa_path.to_string());
     }
+
+    // Options normalisées (préfixe connu, dossier propre).
+    let opts = InjectOptions {
+        path_prefix: opts.path_prefix.clone(),
+        folder: opts.folder.clone(),
+        into_extensions: opts.into_extensions,
+    }
+    .normalized();
 
     let work = std::env::temp_dir().join(format!("px-inject-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&work);
@@ -101,8 +168,9 @@ pub fn inject_dylibs(ipa_path: &str, inputs: &[String]) -> Result<String, String
     extract_ipa(Path::new(ipa_path), &work)?;
     let app = find_app_dir(&work)?;
     let exe = main_executable(&app)?;
-    let frameworks = app.join("Frameworks");
-    std::fs::create_dir_all(&frameworks).map_err(|e| format!("dossier Frameworks : {e}"))?;
+    let frameworks = app.join(&opts.folder);
+    std::fs::create_dir_all(&frameworks)
+        .map_err(|e| format!("dossier {} : {e}", opts.folder))?;
 
     // 3. Copier chaque dylib dans Frameworks/ (dédupliqué par nom de fichier),
     //    en retenant l'ordre des tweaks pour les LC_LOAD_DYLIB.
@@ -175,20 +243,22 @@ pub fn inject_dylibs(ipa_path: &str, inputs: &[String]) -> Result<String, String
         }
     }
 
-    // 6. Exécutable principal : un LC_LOAD_DYLIB par tweak, plus un LC_RPATH
-    //    vers Frameworks/ si des dépendances passent désormais par @rpath.
-    let mut macho = std::fs::read(&exe).map_err(|e| format!("lecture de l'exécutable : {e}"))?;
-    for name in &tweak_names {
-        let load = format!("@executable_path/Frameworks/{name}");
-        add_load_command(&mut macho, &load, LC_LOAD_DYLIB)
-            .map_err(|e| format!("injection de {name} : {e}"))?;
+    // 6. Câblage : un LC_LOAD_DYLIB par tweak dans l'exécutable principal, et
+    //    dans chaque extension si demandé. Un LC_RPATH est ajouté quand le
+    //    préfixe choisi est @rpath, ou quand des dépendances passent par @rpath.
+    let need_rpath = used_rpath || opts.path_prefix == "@rpath";
+    wire_binary(&exe, &tweak_names, &opts, false, need_rpath)
+        .map_err(|e| format!("exécutable principal : {e}"))?;
+
+    if opts.into_extensions {
+        for appex_exe in extension_executables(&app) {
+            // Une extension qui refuse le patch ne doit pas faire échouer toute
+            // l'installation — on l'ignore avec une trace.
+            if let Err(e) = wire_binary(&appex_exe, &tweak_names, &opts, true, need_rpath) {
+                tracing::warn!("extension {} non patchée : {e}", appex_exe.display());
+            }
+        }
     }
-    if used_rpath {
-        add_load_command(&mut macho, "@executable_path/Frameworks", LC_RPATH)
-            .map_err(|e| format!("ajout du rpath (tweak à dépendances) : {e}"))?;
-    }
-    std::fs::write(&exe, &macho).map_err(|e| format!("réécriture de l'exécutable : {e}"))?;
-    set_mode(&exe, 0o755)?;
 
     // 7. Re-zipper.
     let out = std::env::temp_dir().join(format!("px-injected-{}.ipa", std::process::id()));
@@ -225,6 +295,46 @@ fn classify(
     } else {
         libs.push((path, kind));
     }
+}
+
+/// Ajoute les `LC_LOAD_DYLIB` (un par tweak) et, si besoin, le `LC_RPATH` vers
+/// le dossier d'injection, dans le binaire donné (exécutable ou extension).
+fn wire_binary(
+    exe: &Path,
+    tweak_names: &[String],
+    opts: &InjectOptions,
+    is_extension: bool,
+    need_rpath: bool,
+) -> Result<(), String> {
+    let mut macho = std::fs::read(exe).map_err(|e| format!("lecture : {e}"))?;
+    for name in tweak_names {
+        let load = opts.load_path(name, is_extension);
+        add_load_command(&mut macho, &load, LC_LOAD_DYLIB)
+            .map_err(|e| format!("injection de {name} : {e}"))?;
+    }
+    if need_rpath {
+        add_load_command(&mut macho, &opts.reach(is_extension), LC_RPATH)
+            .map_err(|e| format!("ajout du rpath : {e}"))?;
+    }
+    std::fs::write(exe, &macho).map_err(|e| format!("réécriture : {e}"))?;
+    set_mode(exe, 0o755)
+}
+
+/// Exécutables des extensions du bundle (`PlugIns/*.appex`).
+fn extension_executables(app: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(app.join("PlugIns")) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().map(|e| e == "appex").unwrap_or(false) {
+            if let Ok(exe) = main_executable(&path) {
+                out.push(exe);
+            }
+        }
+    }
+    out
 }
 
 // ── Extraction d'un .deb ───────────────────────────────────────────────────
