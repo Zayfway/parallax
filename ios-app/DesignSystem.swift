@@ -310,6 +310,44 @@ struct SectionLabel: View {
     }
 }
 
+/// En-tête d'écran. Un grand titre rounded et un sous-titre, tout en haut de la
+/// page — le registre « large title » d'Apple. Rien en mono ici : le titre
+/// s'adresse à l'humain, il ne déclare pas une valeur machine. Un accessoire
+/// optionnel (bouton d'action) s'aligne à droite.
+struct ScreenHeader<Accessory: View>: View {
+    let title: String
+    let subtitle: String
+    let accessory: Accessory
+
+    init(_ title: String, _ subtitle: String,
+         @ViewBuilder accessory: () -> Accessory = { EmptyView() }) {
+        self.title = title
+        self.subtitle = subtitle
+        self.accessory = accessory()
+    }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: PX.Space.snug) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title)
+                    .font(PX.Font.display(32, .heavy))
+                    .foregroundStyle(PX.Color.ink)
+                    .minimumScaleFactor(0.7)
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(PX.Font.body(13.5))
+                    .foregroundStyle(PX.Color.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+            accessory
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, PX.Space.base)
+        .padding(.bottom, PX.Space.hair)
+    }
+}
+
 struct Tag: View {
     let text: String, color: Color, icon: String
     init(_ text: String, color: Color, icon: String) {

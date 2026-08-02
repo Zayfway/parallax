@@ -141,18 +141,11 @@ struct PairingScreen: View {
             ScrollView {
                 VStack(spacing: PX.Space.snug) {
 
-                    InstrumentStrip(
-                        latitude: nil, longitude: nil,
-                        sessionLabel: "\(connection.deviceIP) : 49152",
-                        live: false
-                    )
-                    .appear(0, shown)
-
-                    title
-                        .appear(1, shown)
+                    ScreenHeader("Jumelage", "Sans ordinateur, directement depuis Réglages.")
+                        .appear(0, shown)
 
                     statusBanner
-                        .appear(2, shown)
+                        .appear(1, shown)
 
                     if case .code(let pin) = phase {
                         pinCard(pin)
@@ -163,10 +156,10 @@ struct PairingScreen: View {
                     }
 
                     rail
-                        .appear(3, shown)
+                        .appear(2, shown)
 
                     action
-                        .appear(4, shown)
+                        .appear(3, shown)
 
                     if case .failed(let message) = phase {
                         errorCard(message)
@@ -174,7 +167,7 @@ struct PairingScreen: View {
                     }
 
                     fallbackCard
-                        .appear(5, shown)
+                        .appear(4, shown)
                 }
                 .padding(.horizontal, PX.Space.base)
                 .padding(.bottom, 110)
@@ -323,21 +316,6 @@ struct PairingScreen: View {
         .padding(PX.Space.loose)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(PX.Color.canvas)
-    }
-
-    // MARK: - Titre
-
-    private var title: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text("Jumelage")
-                .font(PX.Font.display(30, .heavy))
-                .foregroundStyle(PX.Color.ink)
-            Text("Sans ordinateur, directement depuis Réglages.")
-                .font(PX.Font.body(13))
-                .foregroundStyle(PX.Color.inkMuted)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.top, PX.Space.tight)
     }
 
     // MARK: - Bandeau d'état

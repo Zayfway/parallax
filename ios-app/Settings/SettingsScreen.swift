@@ -89,14 +89,8 @@ struct SettingsScreen: View {
 
             ScrollView {
                 VStack(spacing: PX.Space.snug) {
-                    InstrumentStrip(
-                        latitude: location.currentFix?.latitude,
-                        longitude: location.currentFix?.longitude,
-                        sessionLabel: "\(connection.deviceIP) : \(DeviceConnection.rsdPort)",
-                        live: location.state == .simulating
-                    )
-
-                    title
+                    ScreenHeader("Réglages",
+                                 "Ce que l'appareil déclare, et ce que le cœur natif journalise.")
                         .appear(0, shown)
 
                     statusBanner
@@ -118,19 +112,6 @@ struct SettingsScreen: View {
         .animation(PX.Motion.settle, value: connection.tunnelState)
         .animation(PX.Motion.acquire, value: connection.services.count)
         .task { interfaces = DeviceConnection.activeInterfaces() }
-    }
-
-    private var title: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text("Réglages")
-                .font(PX.Font.display(30, .heavy))
-                .foregroundStyle(PX.Color.ink)
-            Text("Ce que l'appareil déclare, et ce que le cœur natif journalise.")
-                .font(PX.Font.body(13))
-                .foregroundStyle(PX.Color.inkMuted)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.top, PX.Space.tight)
     }
 
     /// Ce que l'appareil annonce, mot pour mot. En mono parce que rien ici n'a

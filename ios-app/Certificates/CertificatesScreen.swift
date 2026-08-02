@@ -145,15 +145,23 @@ struct CertificatesScreen: View {
 
             ScrollView {
                 VStack(spacing: PX.Space.snug) {
-                    InstrumentStrip(
-                        latitude: location.currentFix?.latitude,
-                        longitude: location.currentFix?.longitude,
-                        sessionLabel: stripLabel,
-                        live: location.state == .simulating
-                    )
-
-                    header
-                        .appear(0, shown)
+                    ScreenHeader("Certificats",
+                                 "Ce que ton compte développeur déclare chez Apple.") {
+                        if account.isConnected {
+                            Button {
+                                Task { await account.loadCertificates() }
+                            } label: {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(PX.Color.azimuth)
+                                    .padding(PX.Space.tight)
+                                    .background(Circle().fill(PX.Color.azimuth.opacity(0.14)))
+                            }
+                            .disabled(isBusy)
+                            .opacity(isBusy ? 0.4 : 1)
+                        }
+                    }
+                    .appear(0, shown)
 
                     statusBanner
                         .appear(1, shown)
@@ -183,58 +191,6 @@ struct CertificatesScreen: View {
         } message: { certificate in
             Text(warning(for: certificate))
         }
-    }
-
-    // MARK: - En-tête
-
-    private var stripLabel: String {
-        guard account.isConnected else { return "hors ligne" }
-        switch account.certificates {
-        case .idle, .loading:      return "lecture…"
-        case .failed:              return "erreur"
-        case .loaded(let list):
-            // Le quota vient d'Apple (`maxActiveCerts`) ou n'est pas affiché.
-            // Rien n'est codé en dur : trois vaut pour un compte gratuit.
-            if let quota = account.certificateQuota {
-                return "\(list.count) / \(quota) emplacements"
-            }
-            switch list.count {
-            case 0:  return "aucun certificat"
-            case 1:  return "1 certificat"
-            default: return "\(list.count) certificats"
-            }
-        }
-    }
-
-    private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Certificats")
-                    .font(PX.Font.display(30, .heavy))
-                    .foregroundStyle(PX.Color.ink)
-                Text("Ce que ton compte développeur déclare chez Apple.")
-                    .font(PX.Font.body(13))
-                    .foregroundStyle(PX.Color.inkMuted)
-            }
-
-            Spacer()
-
-            if account.isConnected {
-                Button {
-                    Task { await account.loadCertificates() }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(PX.Color.azimuth)
-                        .padding(PX.Space.tight)
-                        .background(Circle().fill(PX.Color.azimuth.opacity(0.14)))
-                }
-                .disabled(isBusy)
-                .opacity(isBusy ? 0.4 : 1)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.top, PX.Space.tight)
     }
 
     private var isBusy: Bool {

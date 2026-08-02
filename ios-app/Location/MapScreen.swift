@@ -487,32 +487,30 @@ struct MapScreen: View {
     }
 
     private var toolbar: some View {
-        HStack(spacing: PX.Space.tight) {
-            ForEach(MapStyleChoice.allCases, id: \.self) { choice in
-                let active = choice == style
-                Text(choice.label)
-                    .font(PX.Font.display(12.5, active ? .semibold : .medium))
-                    .foregroundStyle(active ? PX.Color.ink : PX.Color.inkFaint)
-                    .padding(.horizontal, 13)
-                    .padding(.vertical, 8)
-                    .background(
-                        Capsule().fill(active ? PX.Color.strata : .clear)
-                    )
-                    .contentShape(Capsule())
-                    .onTapGesture { withAnimation(PX.Motion.tap) { style = choice } }
+        HStack(spacing: 2) {
+            // Style de carte : un menu compact plutôt que trois pastilles texte,
+            // qui mangeaient la largeur et repoussaient les boutons de droite
+            // hors du cadre sur les petits écrans.
+            Menu {
+                ForEach(MapStyleChoice.allCases, id: \.self) { choice in
+                    Button {
+                        withAnimation(PX.Motion.tap) { style = choice }
+                    } label: {
+                        Label(choice.label,
+                              systemImage: choice == style ? "checkmark" : choice.icon)
+                    }
+                }
+            } label: {
+                toolbarIcon(style.icon, tint: PX.Color.ink)
             }
 
-            Spacer()
+            Spacer(minLength: 0)
 
-            Button { showingSearch = true } label: {
-                Image(systemName: "magnifyingglass").font(.system(size: 15))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(PX.Color.inkMuted)
-            .padding(.horizontal, 6)
+            Button { showingSearch = true } label: { toolbarIcon("magnifyingglass") }
+                .buttonStyle(.plain)
 
-            // Un trajet part de la position simulée : sans elle, rien à
-            // calculer. Le bouton n'apparaît donc qu'une fois un point posé.
+            // Un trajet part de la position simulée : le bouton n'apparaît
+            // qu'une fois un point posé.
             if engine.currentFix != nil {
                 Button {
                     withAnimation(PX.Motion.settle) {
@@ -522,44 +520,45 @@ struct MapScreen: View {
                         }
                     }
                 } label: {
-                    Image(systemName: routeMode ? "point.topleft.down.to.point.bottomright.curvepath.fill"
-                                                : "point.topleft.down.to.point.bottomright.curvepath")
-                        .font(.system(size: 15))
+                    toolbarIcon(routeMode
+                                ? "point.topleft.down.to.point.bottomright.curvepath.fill"
+                                : "point.topleft.down.to.point.bottomright.curvepath",
+                                tint: routeMode ? PX.Color.azimuth : PX.Color.inkMuted)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(routeMode ? PX.Color.azimuth : PX.Color.inkMuted)
-                .padding(.horizontal, 6)
             }
 
             Button { showingFavorites = true } label: {
-                Image(systemName: favorites.places.isEmpty ? "star" : "star.fill")
-                    .font(.system(size: 15))
+                toolbarIcon(favorites.places.isEmpty ? "star" : "star.fill",
+                            tint: favorites.places.isEmpty ? PX.Color.inkMuted : PX.Color.azimuth)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(favorites.places.isEmpty ? PX.Color.inkMuted : PX.Color.azimuth)
-            .padding(.horizontal, 6)
 
-            Button { showingImporter = true } label: {
-                Image(systemName: "arrow.down.doc").font(.system(size: 15))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(PX.Color.inkMuted)
-            .padding(.horizontal, 6)
+            Button { showingImporter = true } label: { toolbarIcon("arrow.down.doc") }
+                .buttonStyle(.plain)
 
             if engine.state != .idle {
-                Button {
-                    Task { await engine.stop() }
-                } label: {
-                    Image(systemName: "xmark.circle.fill").font(.system(size: 17))
+                Button { Task { await engine.stop() } } label: {
+                    toolbarIcon("xmark.circle.fill", tint: PX.Color.alert)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(PX.Color.alert)
             }
         }
-        .padding(.horizontal, PX.Space.snug)
-        .padding(.vertical, PX.Space.tight)
+        .padding(.horizontal, PX.Space.tight)
+        .padding(.vertical, 5)
         .glassCard(radius: PX.Radius.control)
         .padding(.horizontal, PX.Space.base)
+    }
+
+    /// Icône de barre d'outils à gabarit fixe : toutes identiques, régulièrement
+    /// espacées, aucune ne colle au bord — c'est ce qui manquait au bouton de
+    /// droite qui débordait selon les dimensions de l'écran.
+    private func toolbarIcon(_ name: String, tint: Color = PX.Color.inkMuted) -> some View {
+        Image(systemName: name)
+            .font(.system(size: 16, weight: .medium))
+            .foregroundStyle(tint)
+            .frame(width: 40, height: 36)
+            .contentShape(Rectangle())
     }
 
     // MARK: -
@@ -955,6 +954,14 @@ private enum MapStyleChoice: CaseIterable {
         case .standard: "Plan"
         case .hybrid: "Hybride"
         case .imagery: "Satellite"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .standard: "map"
+        case .hybrid: "map.fill"
+        case .imagery: "globe.americas.fill"
         }
     }
 
