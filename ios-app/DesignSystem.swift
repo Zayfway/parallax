@@ -272,10 +272,13 @@ struct FieldStyle: ViewModifier {
 
     func body(content: Content) -> some View {
         VStack(alignment: .leading, spacing: PX.Space.hair + 2) {
-            Text(label.uppercased())
-                .font(PX.Font.mono(10, .semibold))
-                .tracking(0.9)
-                .foregroundStyle(focused ? PX.Color.azimuth : PX.Color.inkFaint)
+            // Libellé flottant en rounded : c'est une étiquette pour l'humain,
+            // pas une valeur machine. Le champ *contenant* une valeur machine
+            // (IP, URL) reste en mono, via `mono: true` — la règle tient sur la
+            // valeur, pas sur son étiquette.
+            Text(label)
+                .font(PX.Font.display(12, .semibold))
+                .foregroundStyle(focused ? PX.Color.azimuth : PX.Color.inkMuted)
 
             content
                 .font(mono ? PX.Font.mono(15) : PX.Font.body(16))
@@ -303,15 +306,21 @@ extension View {
     }
 }
 
+/// En-tête de section, *à l'intérieur* d'une carte.
+///
+/// Volontairement en **rounded**, pas en mono : un titre de section s'adresse à
+/// l'humain, il ne déclare pas une valeur machine. L'ancienne version était en
+/// mono majuscule tracké — le registre « code » que l'app réserve aux valeurs
+/// de l'appareil, et qui donnait partout un air de listing technique. Feather,
+/// comme Réglages d'iOS, titre ses sections en gras lisible ; on fait pareil.
 struct SectionLabel: View {
     let text: String
     init(_ text: String) { self.text = text }
 
     var body: some View {
-        Text(text.uppercased())
-            .font(PX.Font.mono(10, .semibold))
-            .tracking(1.0)
-            .foregroundStyle(PX.Color.inkFaint)
+        Text(text)
+            .font(PX.Font.display(13, .semibold))
+            .foregroundStyle(PX.Color.inkMuted)
     }
 }
 
