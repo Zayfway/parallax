@@ -2,6 +2,7 @@ name: Publier le site
 
 # Le site vit dans web/ et part sur GitHub Pages a chaque poussee sur main.
 # Aucune etape de build : c est du HTML et du CSS, servis tels quels.
+# Pages active (Settings > Pages > Source = GitHub Actions).
 
 on:
   push:
