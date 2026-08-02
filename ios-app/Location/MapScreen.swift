@@ -45,6 +45,8 @@ struct MapScreen: View {
     @State private var shown = false
     @State private var showingFavorites = false
     @State private var showingSearch = false
+    /// Point à partager (feuille QR + lien). Enveloppé pour `.sheet(item:)`.
+    @State private var sharePoint: SharePoint?
     /// Demande l'autorisation « à l'utilisation » pour afficher le point bleu
     /// de la position réelle. Aucun délégué : MapKit gère l'affichage.
     @State private var locationAuth = CLLocationManager()
@@ -96,8 +98,31 @@ struct MapScreen: View {
                 selectSearchResult(name: name, coordinate: coordinate)
             }
         }
+        .sheet(item: $sharePoint) { point in
+            LocationShareSheet(coordinate: point.coordinate)
+                .presentationDetents([.medium, .large])
+                .presentationBackground(PX.Color.abyss)
+        }
+        // Un lien parallax://locate ouvert depuis le web ou un ami : on vise le
+        // point et on propose de le poser (confirmation, pas de téléportation
+        // silencieuse). Consommé par onChange quand la carte est déjà à l'écran,
+        // par onAppear quand le lien a fait basculer sur cet onglet.
+        .onChange(of: engine.pendingShare) { _, _ in consumePendingShare() }
+        .onAppear { consumePendingShare() }
         // Le fix acquis se sent avant de se voir.
         .sensoryFeedback(.success, trigger: fixCount)
+    }
+
+    /// Vise le point d'un lien reçu et le prépare à être posé.
+    private func consumePendingShare() {
+        guard let point = engine.pendingShare else { return }
+        engine.pendingShare = nil
+        withAnimation(PX.Motion.settle) {
+            camera = .region(MKCoordinateRegion(
+                center: point.coordinate,
+                span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)))
+            pendingDrop = point.coordinate
+        }
     }
 
     /// Biais de recherche autour de la position simulée si on en a une, pour que
@@ -492,12 +517,25 @@ struct MapScreen: View {
             // qui mangeaient la largeur et repoussaient les boutons de droite
             // hors du cadre sur les petits écrans.
             Menu {
-                ForEach(MapStyleChoice.allCases, id: \.self) { choice in
+                Picker("Style", selection: $style) {
+                    ForEach(MapStyleChoice.allCases, id: \.self) { choice in
+                        Label(choice.label, systemImage: choice.icon).tag(choice)
+                    }
+                }
+
+                Divider()
+
+                // Mode furtif : bruit GPS réaliste sur un point fixe.
+                Toggle(isOn: $engine.stealthMode) {
+                    Label("Mode furtif", systemImage: "waveform.path.ecg")
+                }
+
+                // Partager la position simulée courante (QR + lien parallax://).
+                if let fix = engine.currentFix {
                     Button {
-                        withAnimation(PX.Motion.tap) { style = choice }
+                        sharePoint = SharePoint(coordinate: fix)
                     } label: {
-                        Label(choice.label,
-                              systemImage: choice == style ? "checkmark" : choice.icon)
+                        Label("Partager ce point", systemImage: "square.and.arrow.up")
                     }
                 }
             } label: {

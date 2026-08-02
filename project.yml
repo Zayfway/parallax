@@ -46,3 +46,8 @@ targets:
         NSLocationWhenInUseUsageDescription:
           Affiche ta position réelle sur la carte comme point de départ.
         ITSAppUsesNonExemptEncryption: false
+        # Schéma parallax:// — un point partagé (parallax://locate?lat=…&lon=…)
+        # ouvre l'app sur la Carte et y dépose le point.
+        CFBundleURLTypes:
+          - CFBundleURLName: io.parallax.app
+            CFBundleURLSchemes: [parallax]

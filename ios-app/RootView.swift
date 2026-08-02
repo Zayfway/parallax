@@ -28,6 +28,10 @@ struct RootView: View {
     /// devient une attente.
     @State private var launching = true
 
+    /// Onglet courant, piloté aussi par les liens `parallax://` (un point
+    /// partagé bascule sur la Carte).
+    @State private var selectedTab = 0
+
     init() {
         let connection = DeviceConnection()
         _connection = StateObject(wrappedValue: connection)
@@ -47,24 +51,37 @@ struct RootView: View {
                     .zIndex(1)
             }
         }
+        // Liens entrants : `parallax://locate?lat=…&lon=…` (partage entre
+        // appareils, ou site web) bascule sur la Carte et y dépose le point.
+        .onOpenURL { url in
+            if let coord = LocationLink.coordinate(from: url) {
+                location.pendingShare = SharePoint(coordinate: coord)
+                selectedTab = 2
+            }
+        }
     }
 
     private var tabs: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             SideloadScreen()
                 .tabItem { Label("Installer", systemImage: "square.and.arrow.down") }
+                .tag(0)
 
             PairingScreen()
                 .tabItem { Label("Jumelage", systemImage: "lock.iphone") }
+                .tag(1)
 
             MapScreen()
                 .tabItem { Label("Carte", systemImage: "location.viewfinder") }
+                .tag(2)
 
             CertificatesScreen()
                 .tabItem { Label("Certificats", systemImage: "checkmark.seal") }
+                .tag(3)
 
             SettingsScreen()
                 .tabItem { Label("Réglages", systemImage: "slider.horizontal.3") }
+                .tag(4)
         }
         .environmentObject(connection)
         .environmentObject(pairing)

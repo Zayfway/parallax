@@ -64,6 +64,16 @@ final class LocationEngine: ObservableObject {
     /// au bout de la trace.
     @Published var loopTrack = false
 
+    /// **Mode furtif.** Une position parfaitement immobile trahit un spoof : un
+    /// vrai GPS bruite toujours de quelques mètres. Quand c'est actif, un point
+    /// fixe reçoit un léger bruit à chaque tick, pour « respirer » comme un vrai
+    /// relevé. Sans effet sur une trace ou le joystick, déjà en mouvement.
+    @Published var stealthMode = false
+
+    /// Point reçu via un lien `parallax://locate` (partage entre appareils ou
+    /// site web), en attente d'être visé par la carte. Consommé puis remis à nil.
+    @Published var pendingShare: SharePoint?
+
     private var session: OpaquePointer?
     private var pump: Task<Void, Never>?
     private var source: Source?
@@ -288,7 +298,11 @@ final class LocationEngine: ObservableObject {
 
         let target: CLLocationCoordinate2D
         switch source {
-        case .fixed(let c), .joystick(let c):
+        case .fixed(let c):
+            // En mode furtif, un point fixe bruite de quelques mètres pour
+            // ressembler à un vrai relevé plutôt qu'à une position gelée.
+            target = stealthMode ? c.jittered(radiusMeters: 3.5) : c
+        case .joystick(let c):
             target = c
         case .track(let track):
             let duration = max(track.duration, 0.001)
@@ -395,6 +409,15 @@ extension CLLocationCoordinate2D {
         let dLat = (meters * cos(rad)) / 111_320
         let dLon = (meters * sin(rad)) / (111_320 * cos(latitude * .pi / 180))
         return CLLocationCoordinate2D(latitude: latitude + dLat, longitude: longitude + dLon)
+    }
+
+    /// Un point tiré au hasard dans un disque de rayon `radiusMeters` autour de
+    /// soi — le bruit du mode furtif. Distribution en surface (racine du rayon)
+    /// pour ne pas s'agglutiner au centre.
+    func jittered(radiusMeters: Double) -> CLLocationCoordinate2D {
+        let angle = Double.random(in: 0 ..< (2 * .pi))
+        let distance = radiusMeters * Double.random(in: 0 ... 1).squareRoot()
+        return advanced(byMeters: distance, bearing: angle * 180 / .pi)
     }
 }
 
