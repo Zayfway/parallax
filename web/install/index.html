@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Installer Parallax</title>
+<meta name="theme-color" content="#0a0d18">
+<link rel="apple-touch-icon" href="../icon-180.png">
+<link rel="icon" href="../icon-32.png">
+<link rel="stylesheet" href="../style.css">
+<style>
+  /* Un certificat par carte. Vert = servi, rouge = tombé, gris = pas encore
+     configuré. Les trois états doivent se lire sans avoir à ouvrir un menu. */
+  .cert { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
+  .cert .meta { flex: 1; min-width: 0; }
+  .cert h3 { margin: 0 0 2px; font-size: 16px; }
+  .cert p { margin: 0; font-size: 13px; color: var(--ink-muted); }
+  .cert .btn { flex: none; }
+
+  .pill {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.7px;
+    text-transform: uppercase;
+    padding: 3px 9px;
+    border-radius: 999px;
+  }
+  .pill.up { color: var(--verdant); background: rgba(74, 222, 155, 0.13);
+             border: 1px solid rgba(74, 222, 155, 0.3); }
+  .pill.off { color: var(--ink-faint); background: rgba(255, 255, 255, 0.05);
+              border: 1px solid rgba(90, 100, 136, 0.35); }
+
+  .btn[aria-disabled="true"] { opacity: 0.42; pointer-events: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="bar">
+    <a href="../" style="display:flex;align-items:center;gap:12px;text-decoration:none;color:inherit">
+      <img src="../icon-180.png" alt="">
+      <strong>Parallax</strong>
+    </a>
+    <nav><a href="../">Retour</a></nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap" style="padding-top:44px">
+    <span class="label">Installation directe</span>
+    <h2 style="margin-top:8px">Installer sur cet iPhone</h2>
+    <p class="sub">
+      Ouvre cette page <strong>dans Safari sur l'iPhone</strong>. iOS n'installe
+      hors App Store que depuis Safari, jamais depuis une autre application.
+    </p>
+
+    <!-- ── Prérequis ─────────────────────────────────────────────────── -->
+    <div class="glass" id="dnsStep" style="margin-bottom:14px">
+      <div class="rail">
+        <div class="stepline">
+          <div class="dot">1</div>
+          <div>
+            <h4>Le profil de configuration</h4>
+            <p>
+              Touche le bouton, autorise le téléchargement, puis va dans
+              <code>Réglages › Profil téléchargé</code> et installe-le. Garde-le
+              actif jusqu'à la fin.
+            </p>
+            <p style="margin-top:10px">
+              <a class="btn" href="parallax.mobileconfig" id="dnsBtn">
+                Installer le profil
+              </a>
+            </p>
+          </div>
+        </div>
+        <div class="pipe"></div>
+        <div class="stepline">
+          <div class="dot">2</div>
+          <div>
+            <h4>Choisis un certificat</h4>
+            <p>
+              Si l'un est révoqué par Apple, prends le suivant. C'est toute la
+              raison d'en proposer plusieurs.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Certificats ───────────────────────────────────────────────── -->
+    <div class="glass" id="certs">
+      <span class="label">Certificats</span>
+      <div id="list" style="margin-top:16px">
+        <p style="color:var(--ink-muted)">Chargement…</p>
+      </div>
+    </div>
+
+    <div class="notice" style="margin-top:14px">
+      <strong>Si l'installation est refusée</strong>
+      <p>
+        Une app installée avec un certificat révoqué refuse de s'ouvrir, ou
+        disparaît. Reviens ici et prends un autre certificat — l'app se
+        réinstalle par-dessus sans rien perdre. Tu peux aussi passer par
+        <a href="https://github.com/Zayfway/parallax/releases/latest">l'IPA non signé</a>
+        et le signer toi-même avec SideStore ou AltStore.
+      </p>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    Parallax — logiciel libre, licence MIT ·
+    <a href="https://github.com/Zayfway/parallax">github.com/Zayfway/parallax</a>
+  </div>
+</footer>
+
+<script type="module">
+import { buildManifest, installURL } from './manifest.js';
+
+const list = document.getElementById('list');
+
+// Sans iPhone, la page n'a aucun intérêt : on le dit tout de suite plutôt que
+// de laisser quelqu'un toucher un bouton qui ne fera rien.
+const onIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+  || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+try {
+  const config = await (await fetch('certificates.json', { cache: 'no-store' })).json();
+  const usable = config.certificates.filter((c) => c.enabled);
+
+  if (usable.length === 0) {
+    list.innerHTML = `
+      <p style="color:var(--ink-muted);margin:0">
+        Aucun certificat n'est encore configuré. L'installation directe sera
+        disponible dès qu'un certificat de signature sera en place — d'ici là,
+        passe par
+        <a href="https://github.com/Zayfway/parallax/releases/latest">l'IPA non signé</a>.
+      </p>`;
+  } else {
+    list.innerHTML = '';
+    for (const cert of usable) {
+      const manifest = buildManifest({
+        ipa: cert.ipa,
+        bundleIdentifier: config.bundleIdentifier,
+        version: config.version,
+        title: config.title,
+      });
+
+      const row = document.createElement('div');
+      row.className = 'cert';
+      row.innerHTML = `
+        <span class="pill up">servi</span>
+        <div class="meta">
+          <h3>${cert.label}</h3>
+          <p>${cert.note}${cert.expires ? ` · expire le ${cert.expires}` : ''}</p>
+        </div>
+        <a class="btn primary" ${onIOS ? '' : 'aria-disabled="true"'}>Installer</a>`;
+
+      row.querySelector('a.btn').href = installURL(manifest);
+      list.appendChild(row);
+    }
+
+    if (!onIOS) {
+      const hint = document.createElement('p');
+      hint.style.cssText = 'color:var(--ink-faint);font-size:13px;margin:14px 0 0';
+      hint.textContent = "Ouvre cette page sur l'iPhone pour installer.";
+      list.appendChild(hint);
+    }
+  }
+} catch (error) {
+  list.innerHTML = `<p style="color:var(--alert);margin:0">
+    Liste des certificats illisible : ${error.message}</p>`;
+}
+</script>
+
+</body>
+</html>

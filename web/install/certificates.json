@@ -1,0 +1,42 @@
+{
+  "_lisezmoi": [
+    "Chaque entrée est un IPA DÉJÀ SIGNÉ, hébergé où tu veux, en HTTPS.",
+    "iOS installe par itms-services, qui exige un manifeste plist et du HTTPS",
+    "avec un certificat valide — GitHub Pages fournit les deux.",
+    "",
+    "On en propose plusieurs parce qu'Apple révoque : quand un certificat tombe,",
+    "les autres restent debout. L'ordre est celui de la page.",
+    "",
+    "Pour ajouter un certificat, ajoute un objet ici et pousse. Rien d'autre à",
+    "toucher : la page et les manifestes sont générés à partir de ce fichier."
+  ],
+  "version": "0.1.0",
+  "bundleIdentifier": "io.parallax.app",
+  "title": "Parallax",
+  "certificates": [
+    {
+      "id": "a",
+      "label": "Certificat A",
+      "note": "Principal",
+      "ipa": "https://example.invalid/parallax-a.ipa",
+      "expires": "",
+      "enabled": false
+    },
+    {
+      "id": "b",
+      "label": "Certificat B",
+      "note": "Secours",
+      "ipa": "https://example.invalid/parallax-b.ipa",
+      "expires": "",
+      "enabled": false
+    },
+    {
+      "id": "c",
+      "label": "Certificat C",
+      "note": "Secours",
+      "ipa": "https://example.invalid/parallax-c.ipa",
+      "expires": "",
+      "enabled": false
+    }
+  ]
+}

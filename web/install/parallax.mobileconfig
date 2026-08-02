@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Gabarit de profil de configuration.
+
+  ⚠️ NON SIGNÉ. iOS l'installera en l'affichant comme « non vérifié ». Le signer
+  demande un certificat de distribution — la même contrainte que pour l'IPA.
+
+  Ce profil ne déclare qu'un DNS chiffré. Il ne collecte rien, ne route rien
+  ailleurs, et se retire depuis Réglages › Général › VPN et gestion de
+  l'appareil. Remplace l'adresse par la tienne avant de le publier.
+-->
+<plist version="1.0">
+<dict>
+  <key>PayloadContent</key>
+  <array>
+    <dict>
+      <key>PayloadType</key><string>com.apple.dnsSettings.managed</string>
+      <key>PayloadVersion</key><integer>1</integer>
+      <key>PayloadIdentifier</key><string>io.parallax.dns</string>
+      <key>PayloadUUID</key><string>8C1D0B7E-4F2A-4C9E-9B3D-000000000001</string>
+      <key>PayloadDisplayName</key><string>DNS Parallax</string>
+      <key>DNSSettings</key>
+      <dict>
+        <key>DNSProtocol</key><string>HTTPS</string>
+        <key>ServerURL</key><string>https://dns.example.invalid/dns-query</string>
+      </dict>
+    </dict>
+  </array>
+  <key>PayloadType</key><string>Configuration</string>
+  <key>PayloadVersion</key><integer>1</integer>
+  <key>PayloadIdentifier</key><string>io.parallax.profile</string>
+  <key>PayloadUUID</key><string>8C1D0B7E-4F2A-4C9E-9B3D-000000000000</string>
+  <key>PayloadDisplayName</key><string>Parallax</string>
+  <key>PayloadDescription</key><string>DNS chiffré utilisé pendant l'installation. Retirable à tout moment depuis Réglages.</string>
+  <key>PayloadOrganization</key><string>Parallax</string>
+  <key>PayloadRemovalDisallowed</key><false/>
+</dict>
+</plist>
