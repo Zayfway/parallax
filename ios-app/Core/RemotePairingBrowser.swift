@@ -29,6 +29,16 @@ final class RemotePairingBrowser: NSObject, @unchecked Sendable {
         let host: String
         let port: UInt16
         let name: String
+        /// Enregistrements TXT tels qu'annoncés. Ils portent `ver`, `minVer`,
+        /// `identifier` et `authTag` — de quoi savoir quelle version du
+        /// protocole l'appareil attend, et si notre identité lui parle.
+        let txt: [String: String]
+
+        var txtSummary: String {
+            txt.sorted(by: { $0.key < $1.key })
+               .map { "\($0.key)=\($0.value)" }
+               .joined(separator: " ")
+        }
     }
 
     private let lock = NSLock()
@@ -121,7 +131,20 @@ extension RemotePairingBrowser: NetServiceBrowserDelegate, NetServiceDelegate {
         guard let host = sender.addresses?.compactMap(Self.literalAddress).first,
               sender.port > 0 else { return }
 
-        let endpoint = Endpoint(host: host, port: UInt16(sender.port), name: sender.name)
+        var txt: [String: String] = [:]
+        if let data = sender.txtRecordData() {
+            for (key, value) in NetService.dictionary(fromTXTRecord: data) {
+                // Les valeurs binaires (authTag est du base64, donc lisible)
+                // sont rendues en UTF-8 quand c'est possible, en hexadécimal
+                // sinon — on ne veut pas perdre l'information.
+                txt[key] = String(data: value, encoding: .utf8)
+                    ?? value.map { String(format: "%02x", $0) }.joined()
+            }
+        }
+
+        let endpoint = Endpoint(
+            host: host, port: UInt16(sender.port), name: sender.name, txt: txt
+        )
         lock.lock()
         if !found.contains(endpoint) { found.append(endpoint) }
         lock.unlock()
