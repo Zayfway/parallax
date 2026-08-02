@@ -17,6 +17,15 @@ import SwiftUI
 ///
 /// Révoquer casse les apps déjà signées avec le certificat — l'avertissement
 /// est donc dans la confirmation, pas en note de bas de page.
+///
+/// ── MÊME GRAMMAIRE QUE LES DEUX AUTRES ÉCRANS ────────────────────────────
+/// Machine à phases explicite, un seul élément coloré — le bandeau — qui porte
+/// l'état, entrées en cascade. **Pas de rail** en revanche : ici on ne franchit
+/// pas des étapes, on constate un état, et un rail numéroté promettrait une
+/// progression qui n'existe pas.
+///
+/// Le contenu ne redit jamais ce que le bandeau annonce déjà ; il n'offre que
+/// ce sur quoi on peut agir.
 struct CertificatesScreen: View {
 
     @EnvironmentObject private var location: LocationEngine
@@ -24,6 +33,111 @@ struct CertificatesScreen: View {
 
     @State private var pendingRevocation: FFI.Certificate?
     @State private var shown = false
+
+    // MARK: - Phase
+
+    /// Même machine explicite que `PairingScreen` et `SideloadScreen`. Ici elle
+    /// n'est pas séquentielle — on ne franchit pas des étapes, on constate un
+    /// état — d'où un bandeau mais pas de rail : un rail numéroté promettrait
+    /// une progression qui n'existe pas.
+    enum Phase: Equatable {
+        case needsAccount
+        case loading
+        case working(String)
+        case empty
+        case listed(Int, Int?)
+        case failed(String)
+
+        var tint: Color {
+            switch self {
+            case .needsAccount:        PX.Color.inkFaint
+            case .loading, .working:   PX.Color.azimuth
+            case .empty:               PX.Color.inkFaint
+            case .listed:              PX.Color.verdant
+            case .failed:              PX.Color.alert
+            }
+        }
+
+        var label: String {
+            switch self {
+            case .needsAccount: "Compte requis"
+            case .loading:      "Lecture"
+            case .working:      "Opération en cours"
+            case .empty:        "Aucun certificat"
+            case .listed:       "Certificats"
+            case .failed:       "Échec"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .needsAccount: "person.crop.circle.badge.exclamationmark"
+            case .loading:      "arrow.triangle.2.circlepath"
+            case .working:      "hourglass"
+            case .empty:        "checkmark.seal"
+            case .listed:       "checkmark.seal.fill"
+            case .failed:       "exclamationmark.triangle.fill"
+            }
+        }
+
+        var detail: String {
+            switch self {
+            case .needsAccount: "connecte-toi ci-dessous pour lire ceux de ton équipe"
+            case .loading:      "interrogation d'Apple"
+            case .working(let what): what
+            case .empty:        "Apple en créera un à la première signature"
+            case .listed(let count, let quota):
+                if let quota { "\(count) sur \(quota) emplacements déclarés par Apple" }
+                else { count == 1 ? "1 certificat de développement" : "\(count) certificats de développement" }
+            case .failed:       "voir le détail ci-dessous"
+            }
+        }
+    }
+
+    private var phase: Phase {
+        if !account.isConnected { return .needsAccount }
+        if account.isCreatingCertificate { return .working("demande d'un certificat à Apple") }
+        if let serial = account.revoking { return .working("révocation de \(serial)") }
+        switch account.certificates {
+        case .idle, .loading:  return .loading
+        case .failed(let m):   return .failed(m)
+        case .loaded(let list):
+            return list.isEmpty ? .empty : .listed(list.count, account.certificateQuota)
+        }
+    }
+
+    /// Le seul élément qui change de couleur, comme sur les deux autres écrans.
+    private var statusBanner: some View {
+        HStack(spacing: PX.Space.snug) {
+            ZStack {
+                Circle()
+                    .fill(phase.tint.opacity(0.16))
+                    .frame(width: 42, height: 42)
+                Image(systemName: phase.icon)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(phase.tint)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(phase.label)
+                    .font(PX.Font.display(15, .semibold))
+                    .foregroundStyle(PX.Color.ink)
+                Text(phase.detail)
+                    .font(PX.Font.body(12))
+                    .foregroundStyle(PX.Color.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(PX.Space.base)
+        .glassCard(emphasis: true)
+        .overlay(
+            RoundedRectangle(cornerRadius: PX.Radius.card, style: .continuous)
+                .strokeBorder(phase.tint.opacity(0.34), lineWidth: 1)
+        )
+        .shadow(color: phase.tint.opacity(0.22), radius: 16, y: 6)
+        .animation(PX.Motion.settle, value: phase)
+    }
 
     var body: some View {
         ZStack {
@@ -41,8 +155,11 @@ struct CertificatesScreen: View {
                     header
                         .appear(0, shown)
 
-                    AppleAccountCard()
+                    statusBanner
                         .appear(1, shown)
+
+                    AppleAccountCard()
+                        .appear(3, shown)
 
                     content
                 }
@@ -127,52 +244,29 @@ struct CertificatesScreen: View {
 
     // MARK: - Contenu
 
+    /// Le bandeau porte déjà l'état — compte manquant, liste vide, échec. Le
+    /// contenu ne répète donc pas ces messages : il n'offre que ce sur quoi on
+    /// peut agir. Redire la même chose deux fois à l'écran, c'est diluer les
+    /// deux.
     @ViewBuilder
     private var content: some View {
-        if !account.isConnected {
-            notice(
-                icon: "person.crop.circle.badge.questionmark",
-                title: "Compte non connecté",
-                detail: "Connecte-toi ci-dessus pour lire les certificats de ton équipe.",
-                tint: PX.Color.inkFaint
-            )
-            .appear(2, shown)
-        } else {
+        if account.isConnected {
             switch account.certificates {
             case .idle, .loading:
-                loading.appear(2, shown)
+                loading.appear(4, shown)
 
-            case .failed(let message):
-                VStack(spacing: PX.Space.snug) {
-                    notice(
-                        icon: "exclamationmark.triangle",
-                        title: "Lecture impossible",
-                        detail: message,
-                        tint: PX.Color.alert
-                    )
-                    Button("Réessayer") { Task { await account.loadCertificates() } }
-                        .buttonStyle(SecondaryButtonStyle())
-                }
-                .appear(2, shown)
+            case .failed:
+                Button("Réessayer") { Task { await account.loadCertificates() } }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .appear(4, shown)
 
             case .loaded(let list) where list.isEmpty:
-                VStack(spacing: PX.Space.snug) {
-                    notice(
-                        icon: "checkmark.seal",
-                        title: "Aucun certificat",
-                        detail: "Génère-en un maintenant, ou laisse la première installation s'en charger.",
-                        tint: PX.Color.inkFaint
-                    )
-                    createButton
-                }
-                .appear(2, shown)
+                createButton.appear(4, shown)
 
             case .loaded(let list):
-                createButton.appear(2, shown)
-                // Un seul paramètre de fermeture : la décomposition d'un tuple
-                // en deux arguments ne passe pas le vérificateur de types.
+                createButton.appear(4, shown)
                 ForEach(Array(list.enumerated()), id: \.element.id) { pair in
-                    card(pair.element).appear(pair.offset + 3, shown)
+                    card(pair.element).appear(pair.offset + 5, shown)
                 }
             }
         }
@@ -208,28 +302,6 @@ struct CertificatesScreen: View {
             Spacer()
         }
         .padding(PX.Space.base)
-        .glassCard()
-    }
-
-    private func notice(
-        icon: String, title: String, detail: String, tint: Color
-    ) -> some View {
-        VStack(spacing: PX.Space.tight) {
-            Image(systemName: icon)
-                .font(.system(size: 30))
-                .foregroundStyle(tint)
-            Text(title)
-                .font(PX.Font.display(15, .semibold))
-                .foregroundStyle(PX.Color.ink)
-            Text(detail)
-                .font(PX.Font.body(12.5))
-                .foregroundStyle(PX.Color.inkMuted)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, PX.Space.wide)
-        .padding(.horizontal, PX.Space.base)
         .glassCard()
     }
 
