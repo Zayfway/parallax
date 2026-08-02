@@ -1,33 +1,66 @@
-//! Injection de tweaks (`.dylib`) dans un IPA, **avant** signature.
+//! Injection de tweaks dans un IPA, **avant** signature.
 //!
 //! Feather/ESign passent par zsign ; ici, pas besoin : `sign_app` signe déjà
-//! tout le bundle. Il suffit donc d'injecter avant lui — on extrait l'IPA, on
-//! copie le dylib dans `Frameworks/`, on ajoute un `LC_LOAD_DYLIB` à
-//! l'exécutable principal, on re-zippe, et `sign_app` signe le dylib avec le
-//! reste.
+//! tout le bundle. Il suffit donc d'injecter avant lui.
 //!
-//! L'édition Mach-O suit l'algorithme d'`insert_dylib` en mode « padding » : la
-//! commande est écrite dans l'espace libre déjà présent entre la fin des load
-//! commands et le premier octet de contenu (première section non nulle). Rien
-//! n'est décalé, donc **la taille du fichier ne change pas** et les tranches
-//! d'un binaire FAT restent valides. S'il manque de la place, on échoue
-//! proprement plutôt que de corrompre le binaire.
+//! ── LES TROIS PALIERS ──────────────────────────────────────────────────────
+//!
+//! **Palier 1 — dylib autonome.** On copie le `.dylib` dans `Frameworks/` et on
+//! ajoute un `LC_LOAD_DYLIB` à l'exécutable principal. C'est tout ce qu'il faut
+//! pour un tweak sans dépendance (UIKit/Foundation only).
+//!
+//! **Palier 2 — `.deb` + Substrate.** Un vrai tweak jailbreak arrive en `.deb`
+//! (archive `ar` → `data.tar.*` → `Library/MobileSubstrate/DynamicLibraries/`)
+//! et dépend de la Substrate (`/usr/lib/libsubstrate.dylib` ou
+//! `CydiaSubstrate`). On extrait le dylib du `.deb`, on embarque **ElleKit** (le
+//! remplaçant open-source de Substrate) dans `Frameworks/`, et on réécrit la
+//! dépendance Substrate du tweak vers ElleKit.
+//!
+//! **Palier 3 — chaînes de dépendances.** Un tweak peut dépendre d'autres
+//! dylibs (`libcolorpicker`, `libprefs`…). On embarque celles qu'on possède
+//! (fournies ou tirées du `.deb`), on réécrit leur chemin, et on ajoute un
+//! `LC_RPATH` `@executable_path/Frameworks` à l'exécutable — ainsi tout
+//! `@rpath/xxx.dylib` se résout dans le bundle.
+//!
+//! ── POURQUOI `@rpath` ET PAS LE CHEMIN ABSOLU ──────────────────────────────
+//! On ne peut pas déposer un fichier à `/usr/lib/...` dans le bac à sable d'une
+//! app non jailbreakée : dyld y chercherait sur le vrai système. Il faut donc
+//! réécrire la dépendance vers un chemin relatif au bundle. `@rpath/xxx.dylib`
+//! est **plus court** que n'importe quel chemin absolu, ce qui permet de le
+//! réécrire *en place* sans changer la taille de la commande — l'édition Mach-O
+//! reste sans décalage, comme l'ajout de commande (algorithme « padding »
+//! d'`insert_dylib` : on écrit dans l'espace libre entre la fin des load
+//! commands et le premier octet de contenu ; la taille du fichier ne bouge pas).
 
 #![cfg(feature = "device-account")]
 
+use std::collections::{HashMap, HashSet};
+use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 
 const LC_LOAD_DYLIB: u32 = 0x0C;
+const LC_LOAD_WEAK_DYLIB: u32 = 0x8000_0018;
+const LC_REEXPORT_DYLIB: u32 = 0x8000_001F;
+const LC_RPATH: u32 = 0x8000_001C;
 const LC_SEGMENT_64: u32 = 0x19;
 const MH_MAGIC_64: u32 = 0xFEED_FACF;
 const MH_MAGIC_32: u32 = 0xFEED_FACE;
 const FAT_MAGIC: u32 = 0xCAFE_BABE;
 const FAT_MAGIC_64: u32 = 0xCAFE_BABF;
 
-/// Injecte chaque dylib dans l'IPA et rend le chemin d'un **nouvel** IPA
-/// modifié, prêt à être signé. Si `dylibs` est vide, rend l'IPA d'origine.
-pub fn inject_dylibs(ipa_path: &str, dylibs: &[String]) -> Result<String, String> {
-    if dylibs.is_empty() {
+/// Un tweak reçoit un `LC_LOAD_DYLIB` dans l'exécutable ; une dépendance est
+/// seulement embarquée et référencée par le tweak qui la charge.
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    Tweak,
+    Dependency,
+}
+
+/// Injecte chaque entrée dans l'IPA et rend le chemin d'un **nouvel** IPA
+/// modifié, prêt à être signé. Chaque entrée est un `.dylib` (palier 1) ou un
+/// `.deb` (palier 2/3). Si `inputs` est vide, rend l'IPA d'origine.
+pub fn inject_dylibs(ipa_path: &str, inputs: &[String]) -> Result<String, String> {
+    if inputs.is_empty() {
         return Ok(ipa_path.to_string());
     }
 
@@ -35,39 +68,292 @@ pub fn inject_dylibs(ipa_path: &str, dylibs: &[String]) -> Result<String, String
     let _ = std::fs::remove_dir_all(&work);
     std::fs::create_dir_all(&work).map_err(|e| format!("dossier de travail : {e}"))?;
 
-    extract_ipa(Path::new(ipa_path), &work)?;
+    // 1. Rassembler les dylibs : dépaqueter les .deb, laisser passer les .dylib.
+    //    `substrate` retient le nom de fichier du fournisseur Substrate embarqué
+    //    (ElleKit, ou une vraie libsubstrate fournie), pour y router les
+    //    dépendances Substrate des tweaks.
+    let deb_out = work.join("__deb");
+    let mut libs: Vec<(PathBuf, Kind)> = Vec::new();
+    let mut substrate: Option<String> = None;
 
+    for input in inputs {
+        let path = Path::new(input);
+        let ext = path
+            .extension()
+            .map(|e| e.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+
+        if ext == "deb" {
+            for (p, kind) in extract_deb(path, &deb_out)? {
+                classify(p, kind, &mut libs, &mut substrate);
+            }
+        } else {
+            // Tout ce qui n'est pas .deb est traité comme un dylib fourni.
+            classify(path.to_path_buf(), Kind::Tweak, &mut libs, &mut substrate);
+        }
+    }
+
+    if libs.is_empty() {
+        return Err("aucun dylib trouvé dans ce qui a été fourni".into());
+    }
+
+    // 2. Extraire l'IPA et préparer le bundle.
+    extract_ipa(Path::new(ipa_path), &work)?;
     let app = find_app_dir(&work)?;
     let exe = main_executable(&app)?;
-
     let frameworks = app.join("Frameworks");
     std::fs::create_dir_all(&frameworks).map_err(|e| format!("dossier Frameworks : {e}"))?;
 
-    let mut macho = std::fs::read(&exe).map_err(|e| format!("lecture de l'exécutable : {e}"))?;
+    // 3. Copier chaque dylib dans Frameworks/ (dédupliqué par nom de fichier),
+    //    en retenant l'ordre des tweaks pour les LC_LOAD_DYLIB.
+    let mut bundled: HashSet<String> = HashSet::new();
+    let mut tweak_names: Vec<String> = Vec::new();
 
-    for dylib in dylibs {
-        let src = Path::new(dylib);
+    for (src, kind) in &libs {
         let name = src
             .file_name()
-            .ok_or_else(|| format!("dylib sans nom de fichier : {dylib}"))?
+            .ok_or_else(|| format!("dylib sans nom : {}", src.display()))?
             .to_string_lossy()
             .to_string();
-        std::fs::copy(src, frameworks.join(&name))
-            .map_err(|e| format!("copie de {name} dans Frameworks : {e}"))?;
-        let load_path = format!("@executable_path/Frameworks/{name}");
-        add_load_command(&mut macho, &load_path)
-            .map_err(|e| format!("injection de {name} : {e}"))?;
+
+        if bundled.insert(name.clone()) {
+            std::fs::copy(src, frameworks.join(&name))
+                .map_err(|e| format!("copie de {name} dans Frameworks : {e}"))?;
+            set_mode(&frameworks.join(&name), 0o755)?;
+        }
+        if *kind == Kind::Tweak && !tweak_names.contains(&name) {
+            tweak_names.push(name);
+        }
     }
 
+    // 3b. Garde-fou : un tweak qui dépend de la Substrate sans ElleKit fourni
+    //     planterait au chargement (chemin `/usr/lib/...` injoignable dans le
+    //     bac à sable). On le dit clairement plutôt que de livrer un binaire qui
+    //     crashe à l'ouverture.
+    if substrate.is_none() {
+        for name in &bundled {
+            let macho = std::fs::read(frameworks.join(name))
+                .map_err(|e| format!("lecture de {name} : {e}"))?;
+            if references_substrate(&macho)? {
+                let _ = std::fs::remove_dir_all(&work);
+                return Err(format!(
+                    "Le tweak « {name} » dépend de la Substrate, mais ElleKit n'a pas été fourni. \
+                     Ajoute ElleKit (libellekit.dylib, ou le .deb d'ElleKit) à la liste des tweaks."
+                ));
+            }
+        }
+    }
+
+    // 4. Table de réécriture : chaque dylib embarqué devient joignable en
+    //    `@rpath/<nom>`, et les alias Substrate pointent vers ElleKit.
+    let mut rename: HashMap<String, String> = HashMap::new();
+    for name in &bundled {
+        rename.insert(name.clone(), format!("@rpath/{name}"));
+    }
+    if let Some(elle) = &substrate {
+        for alias in [
+            "libsubstrate.dylib",
+            "libsubstrate.0.dylib",
+            "CydiaSubstrate",
+            "libSubstrate.dylib",
+        ] {
+            rename.insert(alias.to_string(), format!("@rpath/{elle}"));
+        }
+    }
+
+    // 5. Réécrire les dépendances *à l'intérieur* de chaque dylib embarqué :
+    //    Substrate → ElleKit, et toute dépendance qu'on embarque → @rpath.
+    let mut used_rpath = false;
+    for name in &bundled {
+        let file = frameworks.join(name);
+        let mut macho =
+            std::fs::read(&file).map_err(|e| format!("lecture de {name} : {e}"))?;
+        if rewrite_deps(&mut macho, &rename)? {
+            std::fs::write(&file, &macho).map_err(|e| format!("réécriture de {name} : {e}"))?;
+            set_mode(&file, 0o755)?;
+            used_rpath = true;
+        }
+    }
+
+    // 6. Exécutable principal : un LC_LOAD_DYLIB par tweak, plus un LC_RPATH
+    //    vers Frameworks/ si des dépendances passent désormais par @rpath.
+    let mut macho = std::fs::read(&exe).map_err(|e| format!("lecture de l'exécutable : {e}"))?;
+    for name in &tweak_names {
+        let load = format!("@executable_path/Frameworks/{name}");
+        add_load_command(&mut macho, &load, LC_LOAD_DYLIB)
+            .map_err(|e| format!("injection de {name} : {e}"))?;
+    }
+    if used_rpath {
+        add_load_command(&mut macho, "@executable_path/Frameworks", LC_RPATH)
+            .map_err(|e| format!("ajout du rpath (tweak à dépendances) : {e}"))?;
+    }
     std::fs::write(&exe, &macho).map_err(|e| format!("réécriture de l'exécutable : {e}"))?;
     set_mode(&exe, 0o755)?;
 
+    // 7. Re-zipper.
     let out = std::env::temp_dir().join(format!("px-injected-{}.ipa", std::process::id()));
     let _ = std::fs::remove_file(&out);
     zip_payload_dir(&work, &out)?;
     let _ = std::fs::remove_dir_all(&work);
 
     Ok(out.to_string_lossy().to_string())
+}
+
+/// Range un dylib dans la bonne liste et repère un éventuel fournisseur
+/// Substrate (ElleKit ou vraie libsubstrate) — celui-ci ne reçoit pas de
+/// LC_LOAD_DYLIB propre : c'est le tweak qui le tire.
+fn classify(
+    path: PathBuf,
+    kind: Kind,
+    libs: &mut Vec<(PathBuf, Kind)>,
+    substrate: &mut Option<String>,
+) {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let lower = name.to_lowercase();
+
+    if lower.contains("ellekit")
+        || lower == "cydiasubstrate"
+        || lower.starts_with("libsubstrate")
+    {
+        if substrate.is_none() {
+            *substrate = Some(name);
+        }
+        libs.push((path, Kind::Dependency));
+    } else {
+        libs.push((path, kind));
+    }
+}
+
+// ── Extraction d'un .deb ───────────────────────────────────────────────────
+
+/// Dépaquète un `.deb` et rend les dylibs qu'il contient. Les dylibs sous
+/// `MobileSubstrate/DynamicLibraries` sont des tweaks ; les autres, des
+/// dépendances.
+fn extract_deb(deb: &Path, dest: &Path) -> Result<Vec<(PathBuf, Kind)>, String> {
+    let bytes = std::fs::read(deb).map_err(|e| format!("lecture du .deb : {e}"))?;
+    if !bytes.starts_with(b"!<arch>\n") {
+        return Err("ce n'est pas un .deb (signature ar absente)".into());
+    }
+
+    // Archive ar : en-têtes de 60 octets, données alignées sur un octet pair.
+    let mut pos = 8usize;
+    let mut data_tar: Option<(Vec<u8>, String)> = None;
+    while pos + 60 <= bytes.len() {
+        let header = &bytes[pos..pos + 60];
+        let name = std::str::from_utf8(&header[0..16])
+            .map_err(|_| "en-tête ar illisible".to_string())?
+            .trim_end()
+            .trim_end_matches('/')
+            .to_string();
+        let size: usize = std::str::from_utf8(&header[48..58])
+            .map_err(|_| "taille ar illisible".to_string())?
+            .trim()
+            .parse()
+            .map_err(|_| "taille ar invalide".to_string())?;
+        let start = pos + 60;
+        let end = start
+            .checked_add(size)
+            .ok_or_else(|| "membre ar hors limites".to_string())?;
+        if end > bytes.len() {
+            return Err("membre ar tronqué".into());
+        }
+        if name.starts_with("data.tar") {
+            data_tar = Some((bytes[start..end].to_vec(), name));
+            break;
+        }
+        pos = end + (size & 1);
+    }
+
+    let (compressed, name) =
+        data_tar.ok_or_else(|| "pas de data.tar dans le .deb".to_string())?;
+    let tar_bytes = decompress(&compressed, &name)?;
+
+    std::fs::create_dir_all(dest).map_err(|e| format!("dossier .deb : {e}"))?;
+    let mut found: Vec<(PathBuf, Kind)> = Vec::new();
+    let mut archive = tar::Archive::new(Cursor::new(tar_bytes));
+    for entry in archive
+        .entries()
+        .map_err(|e| format!("data.tar illisible : {e}"))?
+    {
+        let mut entry = entry.map_err(|e| format!("entrée data.tar illisible : {e}"))?;
+        let path = entry
+            .path()
+            .map_err(|e| format!("chemin data.tar illisible : {e}"))?
+            .to_string_lossy()
+            .to_string();
+
+        if !path.to_lowercase().ends_with(".dylib") {
+            continue;
+        }
+        let base = path.rsplit('/').next().unwrap_or(&path).to_string();
+        if base.is_empty() {
+            continue;
+        }
+        let kind = if path.contains("MobileSubstrate/DynamicLibraries")
+            || path.contains("TweakInject")
+        {
+            Kind::Tweak
+        } else {
+            Kind::Dependency
+        };
+
+        let mut buf = Vec::new();
+        entry
+            .read_to_end(&mut buf)
+            .map_err(|e| format!("lecture de {base} : {e}"))?;
+        let out = dest.join(&base);
+        std::fs::write(&out, &buf).map_err(|e| format!("écriture de {base} : {e}"))?;
+        found.push((out, kind));
+    }
+
+    if found.is_empty() {
+        return Err("aucun .dylib dans ce .deb".into());
+    }
+    Ok(found)
+}
+
+/// Décompresse `data.tar.*` selon son extension. Décodeurs pur Rust, pour que
+/// la cross-compilation iOS reste sans dépendance C.
+fn decompress(data: &[u8], name: &str) -> Result<Vec<u8>, String> {
+    let lower = name.to_lowercase();
+    if lower.ends_with(".tar") {
+        return Ok(data.to_vec());
+    }
+    if lower.ends_with(".gz") {
+        use flate2::read::GzDecoder;
+        let mut out = Vec::new();
+        GzDecoder::new(data)
+            .read_to_end(&mut out)
+            .map_err(|e| format!("gzip : {e}"))?;
+        return Ok(out);
+    }
+    if lower.ends_with(".xz") {
+        let mut out = Vec::new();
+        lzma_rs::xz_decompress(&mut Cursor::new(data), &mut out)
+            .map_err(|e| format!("xz : {e}"))?;
+        return Ok(out);
+    }
+    if lower.ends_with(".lzma") {
+        let mut out = Vec::new();
+        lzma_rs::lzma_decompress(&mut Cursor::new(data), &mut out)
+            .map_err(|e| format!("lzma : {e}"))?;
+        return Ok(out);
+    }
+    if lower.ends_with(".zst") {
+        let mut decoder = ruzstd::StreamingDecoder::new(Cursor::new(data))
+            .map_err(|e| format!("zstd : {e}"))?;
+        let mut out = Vec::new();
+        decoder
+            .read_to_end(&mut out)
+            .map_err(|e| format!("zstd : {e}"))?;
+        return Ok(out);
+    }
+    Err(format!(
+        "compression de {name} non gérée (gz, xz, lzma, zst supportés)"
+    ))
 }
 
 // ── Localisation du bundle et de l'exécutable ──────────────────────────────
@@ -126,22 +412,26 @@ fn write_u32_le(data: &mut [u8], at: usize, v: u32) {
     data[at..at + 4].copy_from_slice(&v.to_le_bytes());
 }
 
-/// Ajoute un `LC_LOAD_DYLIB` — thin 64 bits, ou chaque tranche d'un FAT.
-fn add_load_command(data: &mut [u8], dylib_path: &str) -> Result<(), String> {
+/// Applique `f` à la tranche thin 64 bits, ou à chaque tranche arm64 d'un FAT.
+/// Les tranches 32 bits d'un FAT sont ignorées (l'app tourne en arm64) ; un
+/// binaire thin 32 bits est refusé.
+fn foreach_slice<F>(data: &mut [u8], mut f: F) -> Result<(), String>
+where
+    F: FnMut(&mut [u8], usize) -> Result<(), String>,
+{
     let magic_le = read_u32_le(data, 0)?;
     let magic_be = read_u32_be(data, 0)?;
 
     if magic_le == MH_MAGIC_64 {
-        return add_thin(data, 0, dylib_path);
+        return f(data, 0);
     }
     if magic_le == MH_MAGIC_32 {
-        return Err("Mach-O 32 bits non supporté (injecte une app arm64)".into());
+        return Err("Mach-O 32 bits non supporté (fournis de l'arm64)".into());
     }
     if magic_be == FAT_MAGIC || magic_be == FAT_MAGIC_64 {
         let is64 = magic_be == FAT_MAGIC_64;
         let nfat = read_u32_be(data, 4)? as usize;
         let entry = if is64 { 32usize } else { 20usize };
-        // fat_arch : cputype(4) cpusubtype(4) offset(…) size(…) align(4)
         let mut offsets = Vec::with_capacity(nfat);
         for i in 0..nfat {
             let base = 8 + i * entry;
@@ -155,14 +445,23 @@ fn add_load_command(data: &mut [u8], dylib_path: &str) -> Result<(), String> {
             offsets.push(off);
         }
         for off in offsets {
-            add_thin(data, off, dylib_path)?;
+            // Ne toucher que les tranches 64 bits ; ignorer une éventuelle
+            // tranche armv7.
+            if read_u32_le(data, off)? == MH_MAGIC_64 {
+                f(data, off)?;
+            }
         }
         return Ok(());
     }
     Err("format non reconnu (pas un Mach-O)".into())
 }
 
-fn add_thin(data: &mut [u8], base: usize, dylib_path: &str) -> Result<(), String> {
+/// Ajoute une load command (`LC_LOAD_DYLIB` ou `LC_RPATH`) portant `payload`.
+fn add_load_command(data: &mut [u8], payload: &str, kind: u32) -> Result<(), String> {
+    foreach_slice(data, |d, base| add_command_thin(d, base, payload, kind))
+}
+
+fn add_command_thin(data: &mut [u8], base: usize, payload: &str, kind: u32) -> Result<(), String> {
     if read_u32_le(data, base)? != MH_MAGIC_64 {
         return Err("tranche non 64 bits".into());
     }
@@ -199,14 +498,19 @@ fn add_thin(data: &mut [u8], base: usize, dylib_path: &str) -> Result<(), String
         min_off = lc_end;
     }
 
-    // Nouvelle commande : dylib_command (24 octets fixes) + chemin + NUL,
-    // aligné sur 8.
-    let path_bytes = dylib_path.as_bytes();
-    let cmdsize = (24 + path_bytes.len() + 1 + 7) & !7usize;
+    // Décalage de la chaîne dans la commande : 24 pour dylib_command
+    // (name.offset après timestamp + versions), 12 pour rpath_command.
+    let str_off = match kind {
+        LC_LOAD_DYLIB => 24usize,
+        LC_RPATH => 12usize,
+        _ => return Err("type de load command non géré".into()),
+    };
+    let path_bytes = payload.as_bytes();
+    let cmdsize = (str_off + path_bytes.len() + 1 + 7) & !7usize;
 
     if lc_end + cmdsize > min_off {
         return Err(format!(
-            "espace d'en-tête insuffisant ({} libres, {} requis) — binaire non injectable en place",
+            "espace d'en-tête insuffisant ({} libres, {} requis) — binaire non éditable en place",
             min_off.saturating_sub(lc_end),
             cmdsize
         ));
@@ -215,19 +519,19 @@ fn add_thin(data: &mut [u8], base: usize, dylib_path: &str) -> Result<(), String
         return Err("Mach-O tronqué (padding attendu absent)".into());
     }
 
-    write_u32_le(data, lc_end, LC_LOAD_DYLIB);
+    write_u32_le(data, lc_end, kind);
     write_u32_le(data, lc_end + 4, cmdsize as u32);
-    write_u32_le(data, lc_end + 8, 24); // dylib.name.offset
-    write_u32_le(data, lc_end + 12, 2); // timestamp
-    write_u32_le(data, lc_end + 16, 0x0001_0000); // current_version 1.0.0
-    write_u32_le(data, lc_end + 20, 0x0001_0000); // compatibility_version 1.0.0
-    data[lc_end + 24..lc_end + 24 + path_bytes.len()].copy_from_slice(path_bytes);
-    // Le reste jusqu'à cmdsize est du padding déjà à zéro (NUL de fin compris) ;
-    // on le remet à zéro par sécurité.
+    write_u32_le(data, lc_end + 8, str_off as u32);
+    if kind == LC_LOAD_DYLIB {
+        write_u32_le(data, lc_end + 12, 2); // timestamp
+        write_u32_le(data, lc_end + 16, 0x0001_0000); // current_version 1.0.0
+        write_u32_le(data, lc_end + 20, 0x0001_0000); // compatibility_version 1.0.0
+    }
+    data[lc_end + str_off..lc_end + str_off + path_bytes.len()].copy_from_slice(path_bytes);
     for b in data
         .iter_mut()
-        .skip(lc_end + 24 + path_bytes.len())
-        .take(cmdsize - 24 - path_bytes.len())
+        .skip(lc_end + str_off + path_bytes.len())
+        .take(cmdsize - str_off - path_bytes.len())
     {
         *b = 0;
     }
@@ -237,10 +541,114 @@ fn add_thin(data: &mut [u8], base: usize, dylib_path: &str) -> Result<(), String
     Ok(())
 }
 
+/// Réécrit, dans chaque tranche, les dépendances dont le nom de fichier figure
+/// dans `rename`. La cible (`@rpath/...`) étant plus courte que tout chemin
+/// absolu, elle tient dans la place existante — on écrase et on complète de
+/// NUL, sans changer `cmdsize`. Rend `true` si au moins une réécriture a eu
+/// lieu.
+fn rewrite_deps(data: &mut [u8], rename: &HashMap<String, String>) -> Result<bool, String> {
+    let mut changed = false;
+    foreach_slice(data, |d, base| {
+        if rewrite_deps_thin(d, base, rename)? {
+            changed = true;
+        }
+        Ok(())
+    })?;
+    Ok(changed)
+}
+
+/// Vrai si une tranche référence la Substrate par son chemin absolu habituel.
+fn references_substrate(data: &[u8]) -> Result<bool, String> {
+    // `foreach_slice` prend un `&mut` ; ici on ne modifie rien, mais on réutilise
+    // sa logique de parcours FAT/thin sur une copie de travail.
+    let mut buf = data.to_vec();
+    let mut found = false;
+    foreach_slice(&mut buf, |d, base| {
+        let ncmds = read_u32_le(d, base + 16)?;
+        let mut cursor = base + 32;
+        for _ in 0..ncmds {
+            let cmd = read_u32_le(d, cursor)?;
+            let cmdsize = read_u32_le(d, cursor + 4)? as usize;
+            if cmdsize == 0 {
+                return Err("load command de taille nulle".into());
+            }
+            if cmd == LC_LOAD_DYLIB || cmd == LC_LOAD_WEAK_DYLIB || cmd == LC_REEXPORT_DYLIB {
+                let name_off = read_u32_le(d, cursor + 8)? as usize;
+                if name_off < cmdsize {
+                    let start = cursor + name_off;
+                    let limit = cursor + cmdsize;
+                    let mut end = start;
+                    while end < limit && d.get(end).copied().unwrap_or(0) != 0 {
+                        end += 1;
+                    }
+                    let dep = String::from_utf8_lossy(&d[start..end]);
+                    let file = dep.rsplit('/').next().unwrap_or(&dep).to_lowercase();
+                    if file.starts_with("libsubstrate") || file == "cydiasubstrate" {
+                        found = true;
+                    }
+                }
+            }
+            cursor = cursor
+                .checked_add(cmdsize)
+                .ok_or_else(|| "load commands incohérents".to_string())?;
+        }
+        Ok(())
+    })?;
+    Ok(found)
+}
+
+fn rewrite_deps_thin(
+    data: &mut [u8],
+    base: usize,
+    rename: &HashMap<String, String>,
+) -> Result<bool, String> {
+    let ncmds = read_u32_le(data, base + 16)?;
+    let mut changed = false;
+    let mut cursor = base + 32;
+
+    for _ in 0..ncmds {
+        let cmd = read_u32_le(data, cursor)?;
+        let cmdsize = read_u32_le(data, cursor + 4)? as usize;
+        if cmdsize == 0 {
+            return Err("load command de taille nulle".into());
+        }
+
+        if cmd == LC_LOAD_DYLIB || cmd == LC_LOAD_WEAK_DYLIB || cmd == LC_REEXPORT_DYLIB {
+            let name_off = read_u32_le(data, cursor + 8)? as usize;
+            if name_off < cmdsize {
+                let start = cursor + name_off;
+                let limit = cursor + cmdsize;
+                let mut end = start;
+                while end < limit && data.get(end).copied().unwrap_or(0) != 0 {
+                    end += 1;
+                }
+                let current = String::from_utf8_lossy(&data[start..end]).to_string();
+                let file = current.rsplit('/').next().unwrap_or(&current).to_string();
+
+                if let Some(target) = rename.get(&file) {
+                    let max = limit - start; // place disponible pour chaîne + NUL
+                    if target.as_str() != current && target.len() + 1 <= max {
+                        let tb = target.as_bytes();
+                        data[start..start + tb.len()].copy_from_slice(tb);
+                        for b in data.iter_mut().take(limit).skip(start + tb.len()) {
+                            *b = 0;
+                        }
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        cursor = cursor
+            .checked_add(cmdsize)
+            .ok_or_else(|| "load commands incohérents".to_string())?;
+    }
+    Ok(changed)
+}
+
 // ── Zip / dézip ────────────────────────────────────────────────────────────
 
 fn extract_ipa(ipa: &Path, dest: &Path) -> Result<(), String> {
-    use std::io::Read;
     let file = std::fs::File::open(ipa).map_err(|e| format!("ouverture de l'IPA : {e}"))?;
     let mut archive =
         zip::ZipArchive::new(file).map_err(|e| format!("IPA illisible (zip) : {e}"))?;

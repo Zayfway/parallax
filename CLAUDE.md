@@ -62,6 +62,11 @@ Réglages affichent « stub » alors que le natif est bien là.
 - Installation : `ensure_device_registered` (avant signature, sinon Apple 8220)
   → `sign_app` → **re-zip du Payload** → `install_bytes_with_callback_rsd`
   (Install et non Upgrade). Cible SideStore **et** LiveContainer.
+- Injection de tweaks (`inject.rs`, avant `sign_app`) : **palier 1** dylib
+  autonome, **palier 2** `.deb` (ar → data.tar.{gz,xz,lzma,zst} pur Rust) +
+  Substrate réécrite vers **ElleKit**, **palier 3** chaînes de dépendances via
+  `@rpath` + `LC_RPATH`. Réécriture Mach-O en place (cible `@rpath/x` plus
+  courte que tout chemin absolu), FAT géré tranche par tranche.
 - GPS : point posé, **itinéraire** (voiture/vélo/marche/avion + vitesse), import
   GPX, joystick, **boucle**, **pause/reprise**, **favoris**. Session supervisée
   qui se rétablit après une micro-coupure du tunnel.

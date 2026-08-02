@@ -261,7 +261,9 @@ struct SideloadScreen: View {
             DocumentPicker(
                 contentTypes: importKind == .ipa
                     ? [UTType(filenameExtension: "ipa") ?? .data]
-                    : [UTType(filenameExtension: "dylib") ?? .data],
+                    // Tweaks : .dylib (palier 1) et .deb (palier 2/3).
+                    : [UTType(filenameExtension: "dylib"),
+                       UTType(filenameExtension: "deb")].compactMap { $0 } + [.data],
                 allowsMultiple: importKind == .dylib
             ) { urls in
                 handlePicked(urls)
@@ -589,11 +591,11 @@ struct SideloadScreen: View {
                         }
                     }
                     Button { importKind = .dylib; showingImporter = true } label: {
-                        Label("Ajouter un tweak (.dylib)", systemImage: "plus")
+                        Label("Ajouter un tweak (.dylib ou .deb)", systemImage: "plus")
                     }
                     .buttonStyle(SecondaryButtonStyle())
 
-                    Text("Injecté dans l'app avant signature. Palier 1 : dylib autonome (sans dépendance Substrate/ElleKit).")
+                    Text("Injecté dans l'app avant signature. .dylib autonome, ou .deb complet : la Substrate est réécrite vers ElleKit et les dépendances sont embarquées. Si un tweak dépend de la Substrate, ajoute aussi ElleKit — son .deb suffit, il est détecté automatiquement.")
                         .font(PX.Font.body(11))
                         .foregroundStyle(PX.Color.inkFaint)
                         .fixedSize(horizontal: false, vertical: true)
