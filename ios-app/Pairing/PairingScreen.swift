@@ -299,7 +299,7 @@ struct PairingScreen: View {
                  "Recopie les six chiffres dans la demande affichée par Réglages.")
             connector(filled: phase.step >= 5)
             step(4, "Établir le lien",
-                 "Parallax monte le tunnel jusqu'aux services de l'appareil. C'est ce lien qu'utilisent l'installation et le GPS.")
+                 "Ouvre d'abord LocalDevVPN : le tunnel passe par son loopback. Parallax monte ensuite le lien jusqu'aux services de l'appareil, celui qu'utilisent l'installation et le GPS.")
         }
         .padding(PX.Space.base)
         .glassCard()

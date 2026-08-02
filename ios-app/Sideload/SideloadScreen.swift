@@ -282,7 +282,7 @@ struct SideloadScreen: View {
                  "Il signe l'application et enregistre l'appareil auprès d'Apple.")
             connector(filled: phase.step >= 2)
             step(2, "Lien avec l'appareil",
-                 "Le transfert et l'installation passent par lui. Onglet Jumelage.")
+                 "Ouvre LocalDevVPN, puis établis le lien dans l'onglet Jumelage. Le tunnel passe par le VPN loopback, pas par le Wi-Fi.")
             connector(filled: phase.step >= 3)
             step(3, "Installation",
                  "Téléchargement, signature, transfert, puis pose sur l'écran d'accueil.")

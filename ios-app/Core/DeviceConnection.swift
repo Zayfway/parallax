@@ -41,6 +41,10 @@ final class DeviceConnection: ObservableObject {
     /// réglages, car certaines configurations réseau l'attribuent autrement.
     @AppStorage("deviceIP") var deviceIP: String = "10.7.0.1"
 
+    /// Port RSD atteint par le VPN loopback. Fixe : ce n'est pas une valeur
+    /// annoncée, c'est celle sur laquelle `remoted` écoute côté tunnel.
+    static let rsdPort: UInt16 = 49152
+
     /// Tunnel détenu par Rust. Propriétaire de l'adaptateur, de la poignée RSD
     /// et du runtime qui les pilote — d'où un seul pointeur à libérer.
     private var tunnelHandle: OpaquePointer?
@@ -138,7 +142,8 @@ final class DeviceConnection: ObservableObject {
 
         var errorDescription: String? {
             switch self {
-            case .noTunnel:  "Ouvre LocalDevVPN et touche Connect."
+            case .noTunnel:
+                "Ouvre LocalDevVPN (ou StosVPN) et touche Connect. Le lien passe par son tunnel loopback, pas par le Wi-Fi."
             case .noPairing: "Aucun fichier de jumelage. Passe par l'onglet Jumelage."
             case .noService:
                 "Service de jumelage introuvable sur le réseau local. Vérifie que le mode développeur est actif et que l'autorisation Réseau local est accordée dans Réglages › Parallax."
@@ -165,14 +170,50 @@ final class DeviceConnection: ObservableObject {
         let path = PairingStore.fileURL.path
         try FFI.check(px_pairing_validate(path))
 
-        // Découverte Bonjour puis montage du tunnel, tous deux bloquants, dans
-        // le même saut hors du pool coopératif.
+        // Le VPN loopback est le chemin nominal, et il doit être debout.
+        guard tunnelState.isConnected else { throw ConnectionError.noTunnel }
+
+        // Montage du tunnel, bloquant, hors du pool coopératif.
         let browser = self.browser
+        let loopback = deviceIP
         let handle: OpaquePointer = try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
+                // ── LE CHEMIN NOMINAL : le VPN loopback, port RSD fixe ──────
+                //
+                // Pas de Bonjour ici, et c'est le point qui m'a coûté le plus
+                // cher. L'annonce `_remotepairing._tcp` résout vers l'adresse
+                // Wi-Fi de l'appareil, où `remoted` refuse le pair-verify —
+                // symptôme : `device socket io failed` dès la première trame.
+                //
+                // Le tunnel se monte vers l'adresse du VPN loopback, sur le
+                // port RSD fixe. C'est ce que fait SideInstaller, et c'est ce
+                // pour quoi `deviceIP` et la surveillance d'interface
+                // existaient déjà dans cette classe.
+                LogBridge.noteFromBackground("montage du tunnel vers \(loopback):\(Self.rsdPort) (VPN loopback)…")
+                let viaLoopback = path.withCString { p in
+                    loopback.withCString { h in
+                        px_tunnel_connect(p, h, Self.rsdPort)
+                    }
+                }
+                if let viaLoopback {
+                    LogBridge.noteFromBackground("lien établi par le VPN loopback")
+                    continuation.resume(returning: viaLoopback)
+                    return
+                }
+                let loopbackError = FFI.lastError
+                LogBridge.noteFromBackground(
+                    "VPN loopback refusé : \(loopbackError ?? "raison inconnue") — repli sur Bonjour"
+                )
+
+                // ── REPLI ───────────────────────────────────────────────────
+                // Conservé parce qu'il ne coûte rien et qu'une configuration
+                // réseau exotique peut exposer le service autrement. Mais ce
+                // n'est pas le chemin attendu.
                 let candidates = browser.discover()
                 guard !candidates.isEmpty else {
-                    continuation.resume(throwing: ConnectionError.noService)
+                    continuation.resume(throwing: ConnectionError.handshakeFailed(
+                        loopbackError ?? "Le tunnel n'a pas pu être établi."
+                    ))
                     return
                 }
 
