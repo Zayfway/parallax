@@ -71,6 +71,8 @@ pub unsafe extern "C" fn px_install_ipa(
     ipa_path: *const c_char,
     udid: *const c_char,
     device_name: *const c_char,
+    dylib_paths: *const *const c_char,
+    dylib_count: usize,
     on_progress: PxProgressCallback,
 ) -> *mut c_char {
     clear_last_error();
@@ -91,10 +93,21 @@ pub unsafe extern "C" fn px_install_ipa(
     }
     let name = cstr(device_name).unwrap_or_else(|| "iPhone".to_string());
 
+    // Tweaks (.dylib) à injecter avant signature. Tableau vide = installation
+    // normale, chemin inchangé.
+    let dylibs: Vec<String> = if dylib_paths.is_null() || dylib_count == 0 {
+        Vec::new()
+    } else {
+        std::slice::from_raw_parts(dylib_paths, dylib_count)
+            .iter()
+            .filter_map(|&p| unsafe { cstr(p) })
+            .collect()
+    };
+
     #[cfg(all(feature = "device-account", feature = "device-pairing"))]
     {
         guard("px_install_ipa", ptr::null_mut(), || {
-            match imp::install(session, tunnel, &ipa, &udid, &name, on_progress) {
+            match imp::install(session, tunnel, &ipa, &udid, &name, &dylibs, on_progress) {
                 Ok(special) => CString::new(special)
                     .map(|c| c.into_raw())
                     .unwrap_or(ptr::null_mut()),
@@ -107,7 +120,7 @@ pub unsafe extern "C" fn px_install_ipa(
     }
     #[cfg(not(all(feature = "device-account", feature = "device-pairing")))]
     {
-        let _ = (ipa, udid, name, on_progress);
+        let _ = (ipa, udid, name, dylibs, on_progress);
         set_last_error(
             "px_install_ipa : compilé sans --features device-account,device-pairing",
         );
@@ -215,6 +228,7 @@ mod imp {
         ipa: &str,
         udid: &str,
         device_name: &str,
+        dylibs: &[String],
         on_progress: PxProgressCallback,
     ) -> Result<String, String> {
         let sign = crate::account::session_inner(session);
@@ -237,12 +251,27 @@ mod imp {
                 .map_err(|e| format!("enregistrement de l appareil (erreur 8220 si absent) : {e}"))
         })?;
 
+        // ── 1.5. Injection de tweaks (si demandé) ─────────────────────────
+        // On injecte AVANT de signer : sign_app signera aussi les dylibs
+        // ajoutés. Rend un IPA temporaire modifié, qu'on nettoie après.
+        let ipa_to_sign = if dylibs.is_empty() {
+            ipa.to_string()
+        } else {
+            step(on_progress, 12, "Injection des tweaks");
+            crate::inject::inject_dylibs(ipa, dylibs)?
+        };
+
         // ── 2. Signature ──────────────────────────────────────────────────
         step(on_progress, 20, "Signature de l'application");
-        let (signed_path, special) = sign
-            .runtime
-            .block_on(async { sign.sideloader.sign_app(ipa.into(), None, false).await })
-            .map_err(|e| format!("signature : {e}"))?;
+        let signed = sign.runtime.block_on(async {
+            sign.sideloader
+                .sign_app(ipa_to_sign.as_str().into(), None, false)
+                .await
+        });
+        if !dylibs.is_empty() {
+            let _ = std::fs::remove_file(&ipa_to_sign);
+        }
+        let (signed_path, special) = signed.map_err(|e| format!("signature : {e}"))?;
 
         let special_name = special.map(|s| s.to_string()).unwrap_or_default();
         if !special_name.is_empty() {

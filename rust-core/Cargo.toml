@@ -31,7 +31,7 @@ device  = ["device-location", "device-pairing", "device-account"]
 
 device-location = ["dep:idevice", "dep:tokio"]
 device-pairing  = ["dep:idevice", "dep:tokio", "dep:mdns-sd"]
-device-account  = ["dep:isideload", "dep:tokio", "dep:serde", "dep:serde_json", "dep:zip"]
+device-account  = ["dep:isideload", "dep:tokio", "dep:serde", "dep:serde_json", "dep:zip", "dep:plist"]
 
 [dependencies]
 tracing            = "0.1"
@@ -46,7 +46,13 @@ mdns-sd = { version = "0.19", optional = true }
 # Reconstitution de l'IPA apres signature. Meme version majeure que celle
 # qu'isideload tire deja, donc cargo unifie et rien ne s'ajoute a l'arbre.
 # Sans compression : le transfert est local, par le tunnel.
-zip = { version = "8", default-features = false, optional = true }
+# `deflate` est requis pour LIRE un IPA utilisateur (souvent compressé) lors de
+# l'injection de tweaks. L'écriture, elle, reste en Stored (transfert local).
+zip = { version = "8", default-features = false, features = ["deflate"], optional = true }
+
+# Lecture de CFBundleExecutable dans Info.plist (binaire ou XML) pour trouver
+# l'exécutable principal à patcher lors de l'injection de tweaks.
+plist = { version = "1", optional = true }
 
 # Épinglé sur révision git, pas sur une plage sémantique.
 # Cette révision est celle de StikPair (host RPPairing) et StikDebug (tunnel).

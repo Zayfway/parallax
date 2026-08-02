@@ -60,6 +60,9 @@ struct SideloadScreen: View {
     @State private var customName = ""
     @State private var customURLText = ""
     @State private var showingIPAImporter = false
+    /// Tweaks (.dylib) à injecter dans l'IPA « Autre » avant signature.
+    @State private var tweaks: [URL] = []
+    @State private var showingTweakImporter = false
 
     enum InstallTarget: String, CaseIterable {
         case sideStore = "SideStore"
@@ -275,6 +278,27 @@ struct SideloadScreen: View {
                     customURLText = ""
                     failure = nil
                 }
+            } catch {
+                failure = error.localizedDescription
+            }
+        }
+        .fileImporter(
+            isPresented: $showingTweakImporter,
+            allowedContentTypes: [UTType(filenameExtension: "dylib") ?? .data],
+            allowsMultipleSelection: true
+        ) { result in
+            do {
+                for src in try result.get() {
+                    guard src.startAccessingSecurityScopedResource() else { continue }
+                    defer { src.stopAccessingSecurityScopedResource() }
+                    let dest = URL.temporaryDirectory.appending(path: src.lastPathComponent)
+                    try? FileManager.default.removeItem(at: dest)
+                    try FileManager.default.copyItem(at: src, to: dest)
+                    if !tweaks.contains(dest) {
+                        withAnimation(PX.Motion.settle) { tweaks.append(dest) }
+                    }
+                }
+                failure = nil
             } catch {
                 failure = error.localizedDescription
             }
@@ -589,6 +613,38 @@ struct SideloadScreen: View {
                         .onChange(of: customURLText) { _, value in
                             if !value.isEmpty { customIPA = nil; customName = "" }
                         }
+
+                    Divider().overlay(PX.Color.horizon).padding(.vertical, 2)
+
+                    SectionLabel("Tweaks (.dylib)")
+                    ForEach(tweaks, id: \.self) { url in
+                        HStack(spacing: PX.Space.tight) {
+                            Image(systemName: "puzzlepiece.extension.fill")
+                                .font(.system(size: 12))
+                                .foregroundStyle(PX.Color.azimuth)
+                            Text(url.lastPathComponent)
+                                .font(PX.Font.mono(11))
+                                .foregroundStyle(PX.Color.inkMuted)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer(minLength: 0)
+                            Button { tweaks.removeAll { $0 == url } } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(PX.Color.inkFaint)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    Button { showingTweakImporter = true } label: {
+                        Label("Ajouter un tweak (.dylib)", systemImage: "plus")
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+
+                    Text("Injecté dans l'app avant signature. Palier 1 : dylib autonome (sans dépendance Substrate/ElleKit).")
+                        .font(PX.Font.body(11))
+                        .foregroundStyle(PX.Color.inkFaint)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .transition(.opacity)
             }
@@ -658,10 +714,11 @@ struct SideloadScreen: View {
             }
 
             let ipa = try await resolveIPA()
+            let dylibs = target == .custom ? tweaks.map(\.path) : []
             let special = try await onBackground {
                 try FFI.installIPA(
                     session: session, tunnel: tunnel,
-                    ipaPath: ipa.path, device: device
+                    ipaPath: ipa.path, device: device, dylibs: dylibs
                 )
             }
             installed = special.isEmpty ? installedLabel : special
