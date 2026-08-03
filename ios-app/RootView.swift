@@ -22,6 +22,9 @@ struct RootView: View {
     @StateObject private var account = AppleAccountModel()
     /// Carnet de lieux enregistrés, partagé par la carte.
     @StateObject private var favorites = FavoritesStore()
+    /// Boîte de transfert Sources → Installeur : une app touchée dans une source
+    /// se dépose ici, et l'Installeur la récupère.
+    @StateObject private var inbox = InstallInbox()
 
     /// Le lancement n'est joué qu'une fois par ouverture, jamais rejoué sur un
     /// simple retour au premier plan : une animation qu'on revoit trop souvent
@@ -59,6 +62,11 @@ struct RootView: View {
                 selectedTab = 2
             }
         }
+        // Une app choisie dans Sources bascule sur l'Installeur, qui se
+        // pré-remplit avec son URL.
+        .onChange(of: inbox.pending) { _, request in
+            if request != nil { selectedTab = 0 }
+        }
     }
 
     private var tabs: some View {
@@ -70,17 +78,25 @@ struct RootView: View {
                 .tabItem { Label("Installer", systemImage: "square.and.arrow.down") }
                 .tag(0)
 
+            SourcesScreen()
+                .tabItem { Label("Sources", systemImage: "bag") }
+                .tag(7)
+
             LibraryScreen()
                 .tabItem { Label("Bibliothèque", systemImage: "square.stack.3d.up") }
                 .tag(5)
+
+            MapScreen()
+                .tabItem { Label("Carte", systemImage: "location.viewfinder") }
+                .tag(2)
 
             FilesScreen()
                 .tabItem { Label("Fichiers", systemImage: "folder") }
                 .tag(6)
 
-            MapScreen()
-                .tabItem { Label("Carte", systemImage: "location.viewfinder") }
-                .tag(2)
+            AtelierScreen()
+                .tabItem { Label("Atelier", systemImage: "wrench.and.screwdriver") }
+                .tag(8)
 
             PairingScreen()
                 .tabItem { Label("Jumelage", systemImage: "lock.iphone") }
@@ -99,6 +115,7 @@ struct RootView: View {
         .environmentObject(location)
         .environmentObject(account)
         .environmentObject(favorites)
+        .environmentObject(inbox)
         .tint(live ? PX.Color.signal : PX.Color.azimuth)
         .animation(PX.Motion.settle, value: live)
         .task {

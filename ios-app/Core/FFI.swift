@@ -281,6 +281,83 @@ extension FFI {
         defer { px_string_free(raw) }
         return try? JSONDecoder().decode(DeviceInfo.self, from: Data(String(cString: raw).utf8))
     }
+
+    // MARK: - Atelier (inspection d'IPA, locale)
+
+    /// Inspecte un IPA **local** — aucun appareil requis : architectures,
+    /// chiffrement, frameworks embarqués, profil de provisionnement. `nil` si
+    /// l'archive est illisible. **Bloquant** (lecture + parse) : hors du thread
+    /// principal.
+    static func inspectIPA(path: String) -> IPAInfo? {
+        guard let raw = path.withCString({ px_ipa_inspect($0) }) else { return nil }
+        defer { px_string_free(raw) }
+        return try? JSONDecoder().decode(IPAInfo.self, from: Data(String(cString: raw).utf8))
+    }
+}
+
+/// Résultat de l'inspection d'un IPA (`px_ipa_inspect`).
+struct IPAInfo: Codable, Equatable {
+    let name: String
+    let bundleId: String
+    let version: String
+    let build: String
+    let minOS: String
+    let platformBuild: String
+    let executable: String
+    let deviceFamilies: [Int]
+    let archs: [String]
+    let encrypted: Bool
+    let fileSize: Int
+    let payloadApps: Int
+    let frameworks: [String]
+    let plugins: [String]
+    let linkedDylibs: [String]
+    let provision: IPAProvision?
+
+    var fileSizeText: String {
+        ByteCountFormatter.string(fromByteCount: Int64(fileSize), countStyle: .file)
+    }
+    var versionText: String {
+        (build.isEmpty || build == version) ? version : "\(version) (\(build))"
+    }
+    var deviceFamilyText: String {
+        let names = deviceFamilies.compactMap { f -> String? in
+            switch f { case 1: return "iPhone"; case 2: return "iPad"; default: return nil }
+        }
+        return names.isEmpty ? "—" : names.joined(separator: " · ")
+    }
+    /// Une app déchiffrée est réinstallable signée ailleurs ; une app chiffrée
+    /// (telle qu'elle vient de l'App Store) ne tourne que sur l'appareil d'origine.
+    var encryptionText: String { encrypted ? "Chiffré (App Store)" : "Déchiffré" }
+}
+
+/// Profil de provisionnement embarqué dans un IPA.
+struct IPAProvision: Codable, Equatable {
+    let name: String
+    let team: String
+    let appId: String
+    let type: String
+    let getTaskAllow: Bool
+    let devices: Int
+    let expires: String
+    let daysRemaining: Int
+
+    var typeLabel: String {
+        switch type {
+        case "development": return "Développement"
+        case "adhoc": return "Ad hoc"
+        case "enterprise": return "Entreprise"
+        case "appstore": return "App Store"
+        default: return type
+        }
+    }
+    var isExpired: Bool { daysRemaining < 0 }
+    var validityText: String {
+        if expires.isEmpty { return "—" }
+        if daysRemaining < 0 { return "Expiré" }
+        if daysRemaining == 0 { return "Expire aujourd'hui" }
+        return daysRemaining == 1 ? "1 jour restant" : "\(daysRemaining) jours restants"
+    }
 }
 
 /// Diagnostic appareil : batterie et infos système.

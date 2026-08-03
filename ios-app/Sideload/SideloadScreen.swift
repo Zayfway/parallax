@@ -35,6 +35,7 @@ struct SideloadScreen: View {
 
     @EnvironmentObject private var connection: DeviceConnection
     @EnvironmentObject private var account: AppleAccountModel
+    @EnvironmentObject private var inbox: InstallInbox
     @StateObject private var log = LogBridge.shared
 
     @State private var target: InstallTarget = .sideStore
@@ -280,6 +281,12 @@ struct SideloadScreen: View {
         .onAppear {
             shown = true
             withAnimation(PX.Motion.breathe) { pulse = true }
+            if let req = inbox.pending { applyInbox(req) }
+        }
+        // Une app envoyée depuis Sources : bascule sur « Autre IPA » et colle son
+        // URL, sans toucher à la méthode de signature choisie par l'utilisateur.
+        .onChange(of: inbox.pending) { _, req in
+            if let req { applyInbox(req) }
         }
         .animation(PX.Motion.settle, value: installing)
         .animation(PX.Motion.acquire, value: installed)
@@ -1024,6 +1031,26 @@ struct SideloadScreen: View {
     /// Enchaîne le tout : le lien doit être vivant, le compte connecté, et
     /// l'identité de l'appareil connue — sans UDID, Apple refuse le profil de
     /// provisionnement avec l'erreur 8220.
+    /// Absorbe une demande venue de Sources : on passe en « Autre IPA », on colle
+    /// l'URL, et on oublie tout fichier importé précédent. La méthode de signature
+    /// reste celle que l'utilisateur a réglée. La demande est consommée pour
+    /// qu'un simple retour sur l'onglet ne la rejoue pas.
+    private func applyInbox(_ req: InstallInbox.Request) {
+        withAnimation(PX.Motion.settle) {
+            target = .custom
+            if let path = req.localPath {
+                customIPA = URL(fileURLWithPath: path)
+                customName = req.name
+                customURLText = ""
+            } else {
+                customIPA = nil
+                customURLText = req.url ?? ""
+            }
+        }
+        LogBridge.shared.note("→ installeur : \(req.name)")
+        inbox.consume()
+    }
+
     private func install() async {
         guard !installing else { return }
 

@@ -26,6 +26,7 @@ pub mod apps;
 pub mod diagnostics;
 pub mod files;
 pub mod inject;
+pub mod inspect;
 pub mod install;
 pub mod location;
 pub mod pairing;
