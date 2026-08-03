@@ -30,9 +30,17 @@ struct CertificatesScreen: View {
 
     @EnvironmentObject private var location: LocationEngine
     @EnvironmentObject private var account: AppleAccountModel
+    @EnvironmentObject private var connection: DeviceConnection
 
     @State private var pendingRevocation: FFI.Certificate?
     @State private var shown = false
+
+    // Profils de provisionnement (via le tunnel, misagent).
+    @State private var profiles: [ProvisioningProfile] = []
+    @State private var profilesLoading = false
+    @State private var profilesFailure: String?
+    @State private var pendingProfileRemove: ProvisioningProfile?
+    @State private var profileBusy: String?
 
     // MARK: - Phase
 
@@ -163,13 +171,35 @@ struct CertificatesScreen: View {
                         .appear(3, shown)
 
                     content
+
+                    if connection.tunnelPointer != nil {
+                        profilesSection.appear(6, shown)
+                    }
                 }
                 .padding(.horizontal, PX.Space.base)
                 .padding(.bottom, 110)
             }
         }
-        .onAppear { shown = true }
+        .onAppear {
+            shown = true
+            if profiles.isEmpty, connection.tunnelPointer != nil { Task { await loadProfiles() } }
+        }
         .task(id: account.phase) { await account.loadCertificates() }
+        .confirmationDialog(
+            "Retirer ce profil ?",
+            isPresented: Binding(get: { pendingProfileRemove != nil },
+                                 set: { if !$0 { pendingProfileRemove = nil } }),
+            titleVisibility: .visible,
+            presenting: pendingProfileRemove
+        ) { profile in
+            Button("Retirer \(profile.name)", role: .destructive) {
+                let p = profile; pendingProfileRemove = nil
+                Task { await removeProfile(p) }
+            }
+            Button("Annuler", role: .cancel) { pendingProfileRemove = nil }
+        } message: { profile in
+            Text("Le profil « \(profile.name) » sera retiré de l'appareil.")
+        }
         .confirmationDialog(
             "Révoquer ce certificat ?",
             isPresented: confirmationBinding,
@@ -362,6 +392,114 @@ struct CertificatesScreen: View {
         if days < 0 { return "Expiré" }
         if days == 0 { return "Expire aujourd'hui" }
         return days == 1 ? "1 jour restant" : "\(days) jours restants"
+    }
+
+    // MARK: - Profils de provisionnement
+
+    @ViewBuilder
+    private var profilesSection: some View {
+        VStack(alignment: .leading, spacing: PX.Space.snug) {
+            HStack {
+                SectionLabel("Profils de provisionnement")
+                Spacer()
+                if profilesLoading { ProgressView().tint(PX.Color.azimuth).scaleEffect(0.8) }
+                Button { Task { await loadProfiles() } } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(PX.Color.azimuth)
+                }
+                .buttonStyle(.plain)
+                .disabled(profilesLoading)
+            }
+
+            if let profilesFailure {
+                Text(profilesFailure)
+                    .font(PX.Font.body(12))
+                    .foregroundStyle(PX.Color.alert)
+            } else if profiles.isEmpty {
+                Text(profilesLoading ? "Lecture des profils…" : "Aucun profil installé.")
+                    .font(PX.Font.body(12))
+                    .foregroundStyle(PX.Color.inkFaint)
+            } else {
+                ForEach(profiles) { profile in
+                    profileRow(profile)
+                    if profile.id != profiles.last?.id {
+                        Divider().overlay(PX.Color.horizon)
+                    }
+                }
+            }
+        }
+        .padding(PX.Space.base)
+        .glassCard()
+    }
+
+    private func profileRow(_ profile: ProvisioningProfile) -> some View {
+        HStack(alignment: .top, spacing: PX.Space.snug) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(profile.name)
+                    .font(PX.Font.display(13.5, .semibold))
+                    .foregroundStyle(PX.Color.ink)
+                    .lineLimit(1)
+                if !profile.appId.isEmpty {
+                    Text(profile.appId)
+                        .font(PX.Font.mono(10.5))
+                        .foregroundStyle(PX.Color.inkFaint)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Text(profile.validityText)
+                    .font(PX.Font.body(11))
+                    .foregroundStyle(profile.isExpired ? PX.Color.alert : PX.Color.verdant)
+            }
+            Spacer(minLength: PX.Space.tight)
+            Button { pendingProfileRemove = profile } label: {
+                if profileBusy == profile.uuid {
+                    ProgressView().tint(PX.Color.inkMuted)
+                } else {
+                    Image(systemName: "trash")
+                        .font(.system(size: 14))
+                        .foregroundStyle(PX.Color.alert)
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(profileBusy != nil)
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func loadProfiles() async {
+        guard !profilesLoading else { return }
+        profilesLoading = true
+        profilesFailure = nil
+        defer { profilesLoading = false }
+        do {
+            try await connection.connect()
+            guard let tunnel = connection.tunnelPointer else { return }
+            let list = try await profilesBackground { try FFI.listProfiles(tunnel: tunnel) }
+            withAnimation(PX.Motion.settle) { profiles = list }
+        } catch {
+            profilesFailure = error.localizedDescription
+        }
+    }
+
+    private func removeProfile(_ profile: ProvisioningProfile) async {
+        guard let tunnel = connection.tunnelPointer, profileBusy == nil else { return }
+        profileBusy = profile.uuid
+        defer { profileBusy = nil }
+        do {
+            try await profilesBackground { try FFI.removeProfile(tunnel: tunnel, uuid: profile.uuid) }
+            withAnimation(PX.Motion.settle) { profiles.removeAll { $0.id == profile.id } }
+        } catch {
+            profilesFailure = error.localizedDescription
+        }
+    }
+
+    private func profilesBackground<T>(_ work: @escaping () throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { (c: CheckedContinuation<T, Error>) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do { c.resume(returning: try work()) } catch { c.resume(throwing: error) }
+            }
+        }
     }
 
     // MARK: - Confirmation

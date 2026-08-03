@@ -257,6 +257,39 @@ extension FFI {
         defer { px_string_free(raw) }
         return try? JSONDecoder().decode(DeviceStorage.self, from: Data(String(cString: raw).utf8))
     }
+
+    // MARK: - Profils de provisionnement (misagent)
+
+    static func listProfiles(tunnel: OpaquePointer) throws -> [ProvisioningProfile] {
+        guard let raw = px_profiles_list(tunnel) else {
+            throw Failure(code: PX_ERR_INTERNAL, detail: lastError)
+        }
+        defer { px_string_free(raw) }
+        let json = Data(String(cString: raw).utf8)
+        return (try? JSONDecoder().decode([ProvisioningProfile].self, from: json)) ?? []
+    }
+
+    static func removeProfile(tunnel: OpaquePointer, uuid: String) throws {
+        let rc = uuid.withCString { px_profile_remove(tunnel, $0) }
+        if rc != PX_OK { throw Failure(code: rc, detail: lastError) }
+    }
+}
+
+/// Un profil de provisionnement installé.
+struct ProvisioningProfile: Codable, Identifiable, Equatable {
+    let uuid: String
+    let name: String
+    let team: String
+    let appId: String
+    let daysRemaining: Int
+    let expires: String
+    var id: String { uuid }
+    var isExpired: Bool { daysRemaining < 0 }
+    var validityText: String {
+        if daysRemaining < 0 { return "Expiré" }
+        if daysRemaining == 0 { return "Expire aujourd'hui" }
+        return daysRemaining == 1 ? "1 jour restant" : "\(daysRemaining) jours restants"
+    }
 }
 
 /// Une entrée du système de fichiers de l'appareil (espace Média).

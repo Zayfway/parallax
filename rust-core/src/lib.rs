@@ -28,6 +28,7 @@ pub mod inject;
 pub mod install;
 pub mod location;
 pub mod pairing;
+pub mod profiles;
 pub mod sign_offline;
 pub mod tunnel;
 
