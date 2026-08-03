@@ -346,6 +346,7 @@ struct IPAProvision: Codable, Equatable {
     let devices: Int
     let expires: String
     let daysRemaining: Int
+    let entitlements: [String]
 
     var typeLabel: String {
         switch type {

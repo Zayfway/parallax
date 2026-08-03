@@ -27,6 +27,7 @@ struct AtelierScreen: View {
     @State private var ipaURL: URL?
     @State private var failure: String?
     @State private var showDylibs = false
+    @State private var showEntitlements = false
 
     var body: some View {
         ZStack {
@@ -94,9 +95,13 @@ struct AtelierScreen: View {
         }
         if let prov = info.provision {
             provisionCard(prov).appear(5, shown)
+            if !prov.entitlements.isEmpty {
+                collapsibleList("Habilitations", "checkerboard.shield",
+                                prov.entitlements, isOpen: $showEntitlements).appear(6, shown)
+            }
         }
         if !info.linkedDylibs.isEmpty {
-            dylibsCard(info.linkedDylibs).appear(6, shown)
+            dylibsCard(info.linkedDylibs).appear(7, shown)
         }
 
         Button {
@@ -272,13 +277,20 @@ struct AtelierScreen: View {
     }
 
     private func dylibsCard(_ items: [String]) -> some View {
+        collapsibleList("Bibliothèques liées", "link", items, isOpen: $showDylibs)
+    }
+
+    /// Carte-liste repliable (bibliothèques liées, habilitations…) : l'en-tête
+    /// porte le compte, le corps se déplie à la demande.
+    private func collapsibleList(_ title: String, _ icon: String,
+                                 _ items: [String], isOpen: Binding<Bool>) -> some View {
         VStack(alignment: .leading, spacing: PX.Space.tight) {
-            Button { withAnimation(PX.Motion.settle) { showDylibs.toggle() } } label: {
+            Button { withAnimation(PX.Motion.settle) { isOpen.wrappedValue.toggle() } } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: "link").font(.system(size: 12)).foregroundStyle(PX.Color.inkMuted)
-                    SectionLabel("Bibliothèques liées · \(items.count)")
+                    Image(systemName: icon).font(.system(size: 12)).foregroundStyle(PX.Color.inkMuted)
+                    SectionLabel("\(title) · \(items.count)")
                     Spacer()
-                    Image(systemName: showDylibs ? "chevron.up" : "chevron.down")
+                    Image(systemName: isOpen.wrappedValue ? "chevron.up" : "chevron.down")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(PX.Color.inkFaint)
                 }
@@ -286,7 +298,7 @@ struct AtelierScreen: View {
             }
             .buttonStyle(.plain)
 
-            if showDylibs {
+            if isOpen.wrappedValue {
                 ForEach(items, id: \.self) { item in
                     Text(item)
                         .font(PX.Font.mono(11))

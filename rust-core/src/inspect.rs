@@ -348,6 +348,13 @@ mod imp {
             .map(String::from)
             .unwrap_or_default();
 
+        // Habilitations demandées : on liste les clés, triées. C'est ce qu'un
+        // sideloader veut voir — un IPA qui réclame des accès inattendus se
+        // repère ici.
+        let mut entitlement_keys: Vec<String> =
+            ent.map(|e| e.keys().cloned().collect()).unwrap_or_default();
+        entitlement_keys.sort();
+
         let devices = dict
             .get("ProvisionedDevices")
             .and_then(|v| v.as_array())
@@ -390,6 +397,7 @@ mod imp {
             "devices": devices,
             "expires": expires,
             "daysRemaining": days,
+            "entitlements": entitlement_keys,
         }))
     }
 

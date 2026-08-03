@@ -273,6 +273,9 @@ struct SettingsScreen: View {
         .animation(PX.Motion.settle, value: phase)
     }
 
+    /// Partagé avec `RootView` : le remettre à false rejoue le guide en direct.
+    @AppStorage("px.hasOnboarded") private var hasOnboarded = false
+
     /// « À propos » : version de l'app, dépôt, licence.
     private var aboutCard: some View {
         VStack(alignment: .leading, spacing: PX.Space.snug) {
@@ -307,6 +310,22 @@ struct SettingsScreen: View {
                 }
                 .foregroundStyle(PX.Color.azimuth)
             }
+
+            Divider().overlay(PX.Color.horizon)
+
+            Button { hasOnboarded = false } label: {
+                HStack(spacing: PX.Space.tight) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("Revoir le guide de démarrage")
+                        .font(PX.Font.display(13.5, .semibold))
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .foregroundStyle(PX.Color.azimuth)
+            }
+            .buttonStyle(.plain)
 
             Text("Source-available. Licence : voir le dépôt.")
                 .font(PX.Font.body(11))

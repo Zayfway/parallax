@@ -68,6 +68,11 @@ struct RootView: View {
                 showOnboarding = false
             }
         }
+        // « Revoir le guide » depuis les Réglages remet ce drapeau à false : on
+        // rejoue alors le guide en direct, sans attendre le prochain lancement.
+        .onChange(of: hasOnboarded) { _, done in
+            if !done { showOnboarding = true }
+        }
         // Liens entrants : `parallax://locate?lat=…&lon=…` (partage entre
         // appareils, ou site web) bascule sur la Carte et y dépose le point.
         .onOpenURL { url in
