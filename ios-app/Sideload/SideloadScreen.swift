@@ -64,10 +64,14 @@ struct SideloadScreen: View {
     /// Frameworks & extensions (.dylib/.deb) à embarquer — même mécanique
     /// d'injection, liste séparée pour coller à l'organisation de Feather.
     @State private var frameworks: [URL] = []
-    /// Un seul sélecteur partagé ; on mémorise ce qu'on importe.
-    private enum ImportKind { case ipa, tweak, framework, p12, profile }
-    @State private var importKind: ImportKind = .ipa
-    @State private var showingImporter = false
+    /// Ce qu'on importe. `Identifiable` pour `.sheet(item:)` : le contenu de la
+    /// feuille est construit avec la bonne valeur, sans risque d'état périmé
+    /// (c'était la cause du .p12 grisé).
+    private enum ImportKind: Identifiable {
+        case ipa, tweak, framework, p12, profile
+        var id: Int { hashValue }
+    }
+    @State private var activeImport: ImportKind?
 
     // ── Méthode de signature ───────────────────────────────────────────────
     /// Compte Apple (défaut) ou certificat importé pour qui en a acheté un.
@@ -293,14 +297,13 @@ struct SideloadScreen: View {
         // résultat (le fichier « ne se sélectionnait pas »). Avec `asCopy:true`,
         // iOS copie le fichier dans notre bac à sable — pas d'accès sécurisé à
         // gérer, et le callback du délégué est fiable.
-        .sheet(isPresented: $showingImporter) {
+        .sheet(item: $activeImport) { kind in
             DocumentPicker(
-                contentTypes: pickerTypes,
-                allowsMultiple: importKind == .tweak || importKind == .framework,
-                // Les .p12 sont grisés en mode copie : on les ouvre sur place.
-                asCopy: importKind != .p12
+                contentTypes: pickerTypes(for: kind),
+                allowsMultiple: kind == .tweak || kind == .framework,
+                asCopy: true
             ) { urls in
-                handlePicked(urls)
+                handlePicked(urls, kind: kind)
             }
             .ignoresSafeArea()
         }
@@ -599,7 +602,7 @@ struct SideloadScreen: View {
         VStack(alignment: .leading, spacing: PX.Space.base) {
             // ── Source ──
             insetGroup {
-                Button { importKind = .ipa; showingImporter = true } label: {
+                Button { activeImport = .ipa } label: {
                     row(icon: customName.isEmpty ? "folder.fill" : "doc.fill",
                         title: customName.isEmpty ? "Choisir un fichier .ipa" : customName,
                         subtitle: customName.isEmpty ? "depuis Fichiers" : "sélectionné",
@@ -646,7 +649,7 @@ struct SideloadScreen: View {
                     if tweaksOpen {
                         fileList(tweaks) { url in tweaks.removeAll { $0 == url } }
                         addButton("Ajouter (.dylib / .deb)") {
-                            importKind = .tweak; showingImporter = true
+                            activeImport = .tweak
                         }
                     }
 
@@ -656,7 +659,7 @@ struct SideloadScreen: View {
                     if frameworksOpen {
                         fileList(frameworks) { url in frameworks.removeAll { $0 == url } }
                         addButton("Ajouter (.dylib / .deb)") {
-                            importKind = .framework; showingImporter = true
+                            activeImport = .framework
                         }
                     }
 
@@ -936,7 +939,7 @@ struct SideloadScreen: View {
             }
 
             insetGroup {
-                Button { importKind = .p12; showingImporter = true } label: {
+                Button { activeImport = .p12 } label: {
                     row(icon: p12URL == nil ? "key" : "key.fill",
                         title: p12Name.isEmpty ? "Certificat (.p12)" : p12Name,
                         subtitle: p12URL == nil ? "toucher pour choisir" : "importé",
@@ -957,7 +960,7 @@ struct SideloadScreen: View {
 
                 rowDivider
 
-                Button { importKind = .profile; showingImporter = true } label: {
+                Button { activeImport = .profile } label: {
                     row(icon: profileURL == nil ? "doc.badge.gearshape" : "doc.badge.gearshape.fill",
                         title: profileName.isEmpty ? "Profil (.mobileprovision)" : profileName,
                         subtitle: profileURL == nil ? "toucher pour choisir" : "importé",
@@ -1095,30 +1098,30 @@ struct SideloadScreen: View {
     }
 
     /// Types de fichiers proposés par le sélecteur selon ce qu'on importe.
-    private var pickerTypes: [UTType] {
-        switch importKind {
+    /// Pour le .p12 on autorise **tout** (`.item`/`.data`) : les fichiers
+    /// d'identité sont grisés dès qu'on restreint aux types cert, même avec
+    /// `.data` en plus. On valide ensuite le contenu côté Rust.
+    private func pickerTypes(for kind: ImportKind) -> [UTType] {
+        switch kind {
         case .ipa:
             return [UTType(filenameExtension: "ipa") ?? .data]
         case .tweak, .framework:
             return [UTType(filenameExtension: "dylib"),
                     UTType(filenameExtension: "deb")].compactMap { $0 } + [.data]
         case .p12:
-            return [UTType(filenameExtension: "p12"),
-                    UTType.pkcs12].compactMap { $0 } + [.data]
+            return [.item, .data]
         case .profile:
-            return [UTType(filenameExtension: "mobileprovision") ?? .data]
+            return [UTType(filenameExtension: "mobileprovision") ?? .data, .data]
         }
     }
 
-    /// Reçoit les fichiers du sélecteur UIKit. Avec `asCopy:true`, iOS les a déjà
-    /// posés dans notre bac à sable (`Inbox`) : on n'a donc pas d'accès sécurisé
-    /// à ouvrir. On les recopie tout de même sous un nom propre en zone
-    /// temporaire, pour un chemin stable qui survit à l'installation.
-    private func handlePicked(_ urls: [URL]) {
-        showingImporter = false
+    /// Reçoit les fichiers du sélecteur UIKit. `kind` vient de la feuille
+    /// elle-même, donc jamais périmé.
+    private func handlePicked(_ urls: [URL], kind: ImportKind) {
+        activeImport = nil
         guard !urls.isEmpty else { return }
         do {
-            switch importKind {
+            switch kind {
             case .ipa:
                 if let first = urls.first {
                     let dest = try copyIntoTemp(first)
