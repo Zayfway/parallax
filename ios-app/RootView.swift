@@ -117,6 +117,10 @@ struct RootView: View {
                 .tabItem { Label("Atelier", systemImage: "wrench.and.screwdriver") }
                 .tag(8)
 
+            BackupScreen()
+                .tabItem { Label("Sauvegardes", systemImage: "externaldrive.badge.timemachine") }
+                .tag(9)
+
             PairingScreen()
                 .tabItem { Label("Jumelage", systemImage: "lock.iphone") }
                 .tag(1)

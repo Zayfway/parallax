@@ -83,6 +83,10 @@ Réglages affichent « stub » alors que le natif est bien là.
 - **Atelier** (`inspect.rs`, `px_ipa_inspect`) — inspection **locale** d'un IPA
   (sans tunnel) : archis + chiffrement (Mach-O brut), frameworks/extensions,
   profil de provisionnement (plist du CMS). Envoi direct à l'Installeur.
+- **Sauvegardes** (`backup.rs`, house_arrest) — `vend_container` rend un
+  `AfcClient` sur le conteneur d'une app ; on l'archive en `.zip`
+  (`px_backup_create`) et on le restaure (`px_backup_restore`), même code AFC
+  que Fichiers. Pour les apps sideloadées (get-task-allow).
 - **Profils** (`profiles.rs`, misagent) et **Diagnostic** (`diagnostics.rs`,
   diagnostics_relay : batterie, modèle, iOS).
 - Guide de **premier lancement** (VPN loopback, jumelage, compte) montré une fois.

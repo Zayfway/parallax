@@ -287,6 +287,29 @@ extension FFI {
         return try? JSONDecoder().decode(DeviceInfo.self, from: Data(String(cString: raw).utf8))
     }
 
+    // MARK: - Sauvegardes (conteneur d'app, house_arrest)
+
+    /// Sauvegarde le conteneur de `bundleID` dans le `.zip` local `dest`.
+    /// **Bloquant** (parcours + transfert AFC) : `DispatchQueue.global`.
+    static func backupCreate(tunnel: OpaquePointer, bundleID: String, dest: String) throws -> BackupResult {
+        let raw = bundleID.withCString { b in dest.withCString { d in px_backup_create(tunnel, b, d) } }
+        guard let raw else { throw Failure(code: PX_ERR_INTERNAL, detail: lastError) }
+        defer { px_string_free(raw) }
+        return (try? JSONDecoder().decode(BackupResult.self, from: Data(String(cString: raw).utf8)))
+            ?? BackupResult(files: 0, bytes: 0)
+    }
+
+    /// Restaure le `.zip` local `src` dans le conteneur de `bundleID`. Rend le
+    /// nombre de fichiers réinjectés. **Bloquant** : `DispatchQueue.global`.
+    @discardableResult
+    static func backupRestore(tunnel: OpaquePointer, bundleID: String, src: String) throws -> Int {
+        let raw = bundleID.withCString { b in src.withCString { s in px_backup_restore(tunnel, b, s) } }
+        guard let raw else { throw Failure(code: PX_ERR_INTERNAL, detail: lastError) }
+        defer { px_string_free(raw) }
+        struct R: Decodable { let files: Int }
+        return (try? JSONDecoder().decode(R.self, from: Data(String(cString: raw).utf8)))?.files ?? 0
+    }
+
     // MARK: - Atelier (inspection d'IPA, locale)
 
     /// Inspecte un IPA **local** — aucun appareil requis : architectures,
@@ -363,6 +386,19 @@ struct IPAProvision: Codable, Equatable {
         if daysRemaining < 0 { return "Expiré" }
         if daysRemaining == 0 { return "Expire aujourd'hui" }
         return daysRemaining == 1 ? "1 jour restant" : "\(daysRemaining) jours restants"
+    }
+}
+
+/// Résultat d'une sauvegarde de conteneur (`px_backup_create`).
+struct BackupResult: Codable {
+    let files: Int
+    let bytes: Int
+    var sizeText: String {
+        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+    }
+    var summary: String {
+        let f = files == 1 ? "1 fichier" : "\(files) fichiers"
+        return bytes > 0 ? "\(f) · \(sizeText)" : f
     }
 }
 

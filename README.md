@@ -67,6 +67,12 @@ builds produits publiquement par **GitHub Actions**.
   **supprimer**, **créer un dossier**, **recherche** et **tri**, jauge de
   **stockage**.
 
+### 💾 Sauvegardes — protéger les données d'une app
+- Une signature gratuite **expire en 7 jours** ; à la réinstallation, iOS efface
+  le conteneur. Archive-le d'abord dans un **`.zip`** (à garder ou partager).
+- **Restaure** un `.zip` dans l'app après réinstallation — progression, réglages
+  et fichiers reviennent. Via `house_arrest`, pour les apps sideloadées.
+
 ### 🔐 Profils & 🩺 diagnostic
 - **Profils de provisionnement** : liste (nom, app id, validité) et **retrait**
   d'un profil expiré ou en trop qui bloquerait une installation.
