@@ -70,6 +70,19 @@ final class LocationEngine: ObservableObject {
     /// relevé. Sans effet sur une trace ou le joystick, déjà en mouvement.
     @Published var stealthMode = false
 
+    /// **Mode flânerie.** Au lieu de rester figé, le point se **promène** autour
+    /// de son ancre : il choisit un lieu au hasard dans un rayon, y marche à
+    /// allure piétonne, s'arrête parfois, repart. On ne ressemble plus à une
+    /// épingle gelée mais à quelqu'un qui vit sur place — ce que traquent Snap
+    /// Map, Life360 & co. Prime sur le mode furtif quand les deux sont actifs.
+    @Published var strollMode = false
+
+    /// Ancre de la flânerie (le point posé) et destination courante.
+    private var strollAnchor: CLLocationCoordinate2D?
+    private var strollWaypoint: CLLocationCoordinate2D?
+    /// Rayon de flânerie, en mètres.
+    private let strollRadius: Double = 70
+
     /// Point reçu via un lien `parallax://locate` (partage entre appareils ou
     /// site web), en attente d'être visé par la carte. Consommé puis remis à nil.
     @Published var pendingShare: SharePoint?
@@ -126,6 +139,8 @@ final class LocationEngine: ObservableObject {
         trackPaused = false
         trackPausedElapsed = nil
         trackProgress = 0
+        strollAnchor = nil
+        strollWaypoint = nil
 
         if let session {
             // clear() avant close() : rendre le GPS réel explicitement plutôt que
@@ -299,9 +314,15 @@ final class LocationEngine: ObservableObject {
         let target: CLLocationCoordinate2D
         switch source {
         case .fixed(let c):
-            // En mode furtif, un point fixe bruite de quelques mètres pour
-            // ressembler à un vrai relevé plutôt qu'à une position gelée.
-            target = stealthMode ? c.jittered(radiusMeters: 3.5) : c
+            // Flânerie > furtif > figé. La flânerie promène le point ; le furtif
+            // le fait juste vibrer ; sinon il reste fixe.
+            if strollMode {
+                target = nextStroll(around: c)
+            } else if stealthMode {
+                target = c.jittered(radiusMeters: 3.5)
+            } else {
+                target = c
+            }
         case .joystick(let c):
             target = c
         case .track(let track):
@@ -375,6 +396,33 @@ final class LocationEngine: ObservableObject {
         }
     }
 
+    /// Un pas de flânerie autour de `anchor`. Marche vers une destination tirée
+    /// au hasard dans le rayon ; en arrivant, en choisit une autre (avec une
+    /// chance de « faire une pause » sur place). Re-ancre si l'utilisateur a
+    /// changé de point.
+    private func nextStroll(around anchor: CLLocationCoordinate2D) -> CLLocationCoordinate2D {
+        if strollAnchor == nil || strollAnchor!.distance(to: anchor) > strollRadius * 1.5 {
+            strollAnchor = anchor
+            strollWaypoint = anchor.jittered(radiusMeters: strollRadius)
+        }
+        let base = strollAnchor ?? anchor
+        let from = currentFix ?? anchor
+        let waypoint = strollWaypoint ?? base
+
+        if from.distance(to: waypoint) < 2 {
+            // Arrivé : une pause de temps en temps, sinon nouvelle destination.
+            if Double.random(in: 0 ... 1) < 0.25 { return from }
+            strollWaypoint = base.jittered(radiusMeters: strollRadius)
+            return from
+        }
+
+        // ~1,3 m/s à 1 Hz : allure de marche. Un léger bruit latéral évite la
+        // ligne droite parfaite.
+        let step = min(1.3, from.distance(to: waypoint))
+        let stepped = from.advanced(byMeters: step, bearing: from.bearing(to: waypoint))
+        return stepped.jittered(radiusMeters: 0.6)
+    }
+
     private func applyNow(_ coordinate: CLLocationCoordinate2D) async {
         guard let session else { return }
         if px_location_set(session, coordinate.latitude, coordinate.longitude) == PX_OK {
@@ -418,6 +466,22 @@ extension CLLocationCoordinate2D {
         let angle = Double.random(in: 0 ..< (2 * .pi))
         let distance = radiusMeters * Double.random(in: 0 ... 1).squareRoot()
         return advanced(byMeters: distance, bearing: angle * 180 / .pi)
+    }
+
+    /// Distance en mètres (géodésique, via CLLocation).
+    func distance(to other: CLLocationCoordinate2D) -> Double {
+        CLLocation(latitude: latitude, longitude: longitude)
+            .distance(from: CLLocation(latitude: other.latitude, longitude: other.longitude))
+    }
+
+    /// Cap initial (degrés) vers un autre point.
+    func bearing(to other: CLLocationCoordinate2D) -> Double {
+        let dLon = (other.longitude - longitude) * .pi / 180
+        let lat1 = latitude * .pi / 180
+        let lat2 = other.latitude * .pi / 180
+        let y = sin(dLon) * cos(lat2)
+        let x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
+        return atan2(y, x) * 180 / .pi
     }
 }
 

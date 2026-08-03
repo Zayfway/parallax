@@ -296,7 +296,9 @@ struct SideloadScreen: View {
         .sheet(isPresented: $showingImporter) {
             DocumentPicker(
                 contentTypes: pickerTypes,
-                allowsMultiple: importKind == .tweak || importKind == .framework
+                allowsMultiple: importKind == .tweak || importKind == .framework,
+                // Les .p12 sont grisés en mode copie : on les ouvre sur place.
+                asCopy: importKind != .p12
             ) { urls in
                 handlePicked(urls)
             }
@@ -1163,9 +1165,13 @@ struct SideloadScreen: View {
         }
     }
 
-    /// Recopie un fichier livré par le sélecteur (déjà local grâce à `asCopy`)
-    /// sous un chemin temporaire stable et à nom propre.
+    /// Recopie un fichier livré par le sélecteur sous un chemin temporaire
+    /// stable et à nom propre. Gère les deux modes du sélecteur : `asCopy:true`
+    /// (déjà dans le bac à sable, pas d'accès sécurisé) et `asCopy:false`
+    /// (fichier sur place, accès sécurisé le temps de la copie).
     private func copyIntoTemp(_ src: URL) throws -> URL {
+        let scoped = src.startAccessingSecurityScopedResource()
+        defer { if scoped { src.stopAccessingSecurityScopedResource() } }
         let dest = URL.temporaryDirectory.appending(path: src.lastPathComponent)
         try? FileManager.default.removeItem(at: dest)
         try FileManager.default.copyItem(at: src, to: dest)
@@ -1244,11 +1250,16 @@ struct SideloadScreen: View {
 struct DocumentPicker: UIViewControllerRepresentable {
     let contentTypes: [UTType]
     let allowsMultiple: Bool
+    /// `asCopy` importe une copie dans le bac à sable (fiable pour les .ipa /
+    /// .dylib). Les fichiers d'identité (.p12) sont grisés en mode copie : pour
+    /// eux on ouvre **sur place** (`asCopy:false`) et on copie sous accès
+    /// sécurisé.
+    var asCopy: Bool = true
     let onPick: ([URL]) -> Void
 
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
         let picker = UIDocumentPickerViewController(
-            forOpeningContentTypes: contentTypes, asCopy: true
+            forOpeningContentTypes: contentTypes, asCopy: asCopy
         )
         picker.allowsMultipleSelection = allowsMultiple
         picker.shouldShowFileExtensions = true

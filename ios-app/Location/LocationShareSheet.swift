@@ -66,6 +66,12 @@ struct LocationShareSheet: View {
 
     var body: some View {
         VStack(spacing: PX.Space.loose) {
+            // Poignée maison : l'indicateur système barrait le titre.
+            Capsule()
+                .fill(PX.Color.horizon)
+                .frame(width: 38, height: 5)
+                .padding(.top, PX.Space.snug)
+
             VStack(spacing: 6) {
                 Text("Partager le point")
                     .font(PX.Font.display(20, .semibold))
@@ -74,7 +80,6 @@ struct LocationShareSheet: View {
                     .font(PX.Font.mono(13, .medium))
                     .foregroundStyle(PX.Color.inkMuted)
             }
-            .padding(.top, PX.Space.loose)
 
             if let qr = qrImage(link) {
                 Image(uiImage: qr)
@@ -119,9 +124,9 @@ struct LocationShareSheet: View {
 
             Spacer(minLength: 0)
         }
-        .padding(PX.Space.loose)
+        .padding(.horizontal, PX.Space.loose)
+        .padding(.bottom, PX.Space.loose)
         .frame(maxWidth: .infinity)
-        .background(PX.Color.canvas)
     }
 
     /// Rend le QR à partir du lien. `interpolation(.none)` conservé à

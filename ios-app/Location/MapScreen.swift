@@ -102,6 +102,7 @@ struct MapScreen: View {
             LocationShareSheet(coordinate: point.coordinate)
                 .presentationDetents([.medium, .large])
                 .presentationBackground(PX.Color.abyss)
+                .presentationDragIndicator(.hidden)
         }
         // Un lien parallax://locate ouvert depuis le web ou un ami : on vise le
         // point et on propose de le poser (confirmation, pas de téléportation
@@ -528,6 +529,11 @@ struct MapScreen: View {
                 // Mode furtif : bruit GPS réaliste sur un point fixe.
                 Toggle(isOn: $engine.stealthMode) {
                     Label("Mode furtif", systemImage: "waveform.path.ecg")
+                }
+
+                // Flânerie : le point se promène autour de son ancre.
+                Toggle(isOn: $engine.strollMode) {
+                    Label("Flânerie", systemImage: "figure.walk.motion")
                 }
 
                 // Partager la position simulée courante (QR + lien parallax://).
