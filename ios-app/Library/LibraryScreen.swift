@@ -23,6 +23,8 @@ struct LibraryScreen: View {
     @State private var busyID: String?
     @State private var shown = false
     @State private var filter: AppFilter = .all
+    @State private var searchText = ""
+    @State private var sortMode: SortMode = .name
     /// Icônes chargées paresseusement (bundleId → image) et ce qui a déjà été
     /// demandé, pour ne pas relancer.
     @State private var icons: [String: UIImage] = [:]
@@ -40,13 +42,36 @@ struct LibraryScreen: View {
         case store = "App Store"
     }
 
-    private var filteredApps: [InstalledApp] {
-        switch filter {
-        case .all:        return apps
-        case .sideloaded: return apps.filter { $0.isSideloaded }
-        case .store:      return apps.filter { $0.isStore }
-        }
+    /// Tri de la liste.
+    enum SortMode: String, CaseIterable {
+        case name = "Nom"
+        case size = "Taille"
+        var icon: String { self == .name ? "textformat" : "internaldrive" }
     }
+
+    private var filteredApps: [InstalledApp] {
+        var list: [InstalledApp]
+        switch filter {
+        case .all:        list = apps
+        case .sideloaded: list = apps.filter { $0.isSideloaded }
+        case .store:      list = apps.filter { $0.isStore }
+        }
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        if !query.isEmpty {
+            list = list.filter {
+                $0.name.localizedCaseInsensitiveContains(query)
+                    || $0.bundleId.localizedCaseInsensitiveContains(query)
+            }
+        }
+        switch sortMode {
+        case .name: list.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        case .size: list.sort { $0.sizeBytes > $1.sizeBytes }
+        }
+        return list
+    }
+
+    /// Espace total occupé par les apps affichées.
+    private var totalSize: Int { filteredApps.reduce(0) { $0 + $1.sizeBytes } }
 
     var body: some View {
         ZStack {
@@ -74,6 +99,7 @@ struct LibraryScreen: View {
                 .padding(.horizontal, PX.Space.base)
                 .padding(.bottom, 110)
             }
+            .refreshable { await load() }
         }
         .onAppear {
             shown = true
@@ -122,14 +148,22 @@ struct LibraryScreen: View {
                    detail: "Installe une app depuis l'onglet Installer.")
                 .appear(1, shown)
         } else {
-            SegmentedRow(selection: $filter, options: AppFilter.allCases) { $0.rawValue }
-                .appear(1, shown)
+            searchBar.appear(1, shown)
 
-            HStack {
+            SegmentedRow(selection: $filter, options: AppFilter.allCases) { $0.rawValue }
+                .appear(2, shown)
+
+            HStack(spacing: PX.Space.tight) {
                 SectionLabel("\(filteredApps.count) app\(filteredApps.count > 1 ? "s" : "")")
+                if totalSize > 0 {
+                    Text("· \(ByteCountFormatter.string(fromByteCount: Int64(totalSize), countStyle: .file))")
+                        .font(PX.Font.mono(10.5))
+                        .foregroundStyle(PX.Color.inkFaint)
+                }
                 Spacer()
+                sortMenu
             }
-            .appear(2, shown)
+            .appear(3, shown)
 
             if filteredApps.isEmpty {
                 banner(icon: "line.3.horizontal.decrease.circle", tint: PX.Color.inkFaint,
@@ -148,6 +182,58 @@ struct LibraryScreen: View {
                 .glassCard()
                 .appear(3, shown)
             }
+        }
+    }
+
+    private var searchBar: some View {
+        HStack(spacing: PX.Space.tight) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 13))
+                .foregroundStyle(PX.Color.inkFaint)
+            TextField("Rechercher une app", text: $searchText)
+                .font(PX.Font.body(14))
+                .foregroundStyle(PX.Color.ink)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+            if !searchText.isEmpty {
+                Button { searchText = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(PX.Color.inkFaint)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, PX.Space.base)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: PX.Radius.control, style: .continuous)
+                .fill(PX.Color.night.opacity(0.55))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: PX.Radius.control, style: .continuous)
+                .strokeBorder(PX.Color.horizon, lineWidth: 1)
+        )
+    }
+
+    private var sortMenu: some View {
+        Menu {
+            Picker("Trier", selection: $sortMode) {
+                ForEach(SortMode.allCases, id: \.self) { mode in
+                    Label(mode.rawValue, systemImage: mode.icon).tag(mode)
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.up.arrow.down")
+                    .font(.system(size: 10, weight: .semibold))
+                Text(sortMode.rawValue)
+                    .font(PX.Font.display(11, .semibold))
+            }
+            .foregroundStyle(PX.Color.azimuth)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(PX.Color.azimuth.opacity(0.14)))
         }
     }
 

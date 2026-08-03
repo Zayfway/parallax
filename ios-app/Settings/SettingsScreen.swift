@@ -105,6 +105,7 @@ struct SettingsScreen: View {
                     anisetteCard.appear(3, shown)
                     networkCard.appear(4, shown)
                     consoleCard.appear(5, shown)
+                    aboutCard.appear(6, shown)
                 }
                 .padding(.horizontal, PX.Space.base)
                 .padding(.bottom, 110)
@@ -190,6 +191,55 @@ struct SettingsScreen: View {
         )
         .shadow(color: phase.tint.opacity(0.22), radius: 16, y: 6)
         .animation(PX.Motion.settle, value: phase)
+    }
+
+    /// « À propos » : version de l'app, dépôt, licence.
+    private var aboutCard: some View {
+        VStack(alignment: .leading, spacing: PX.Space.snug) {
+            SectionLabel("À propos")
+
+            HStack {
+                Text("Parallax")
+                    .font(PX.Font.display(15, .semibold))
+                    .foregroundStyle(PX.Color.ink)
+                Spacer()
+                Text(appVersion)
+                    .font(PX.Font.mono(11.5))
+                    .foregroundStyle(PX.Color.inkMuted)
+            }
+
+            Text("Sideloading d'IPA et spoofing GPS, entièrement sur l'appareil, sans ordinateur.")
+                .font(PX.Font.body(12))
+                .foregroundStyle(PX.Color.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Divider().overlay(PX.Color.horizon)
+
+            Link(destination: URL(string: "https://github.com/Zayfway/parallax")!) {
+                HStack(spacing: PX.Space.tight) {
+                    Image(systemName: "chevron.left.forwardslash.chevron.right")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("Code source sur GitHub")
+                        .font(PX.Font.display(13.5, .semibold))
+                    Spacer()
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .foregroundStyle(PX.Color.azimuth)
+            }
+
+            Text("Source-available. Licence : voir le dépôt.")
+                .font(PX.Font.body(11))
+                .foregroundStyle(PX.Color.inkFaint)
+        }
+        .padding(PX.Space.base)
+        .glassCard()
+    }
+
+    private var appVersion: String {
+        let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+        let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
+        return "v\(v) (\(b))"
     }
 
     private var buildCard: some View {
