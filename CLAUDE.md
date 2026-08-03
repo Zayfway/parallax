@@ -68,18 +68,39 @@ Réglages affichent « stub » alors que le natif est bien là.
   `@rpath` + `LC_RPATH`. Réécriture Mach-O en place (cible `@rpath/x` plus
   courte que tout chemin absolu), FAT géré tranche par tranche.
 - GPS : point posé, **itinéraire** (voiture/vélo/marche/avion + vitesse), import
-  GPX, joystick, **boucle**, **pause/reprise**, **favoris**. Session supervisée
-  qui se rétablit après une micro-coupure du tunnel.
+  GPX, joystick, **boucle**, **pause/reprise**, **favoris**, **mode furtif**
+  (bruit GPS), **flânerie** (le point se promène), **partage** (QR + lien
+  `parallax://locate`). Session supervisée qui se rétablit après une micro-coupure.
+- **Bibliothèque** (`apps.rs`) — apps installées : icônes réelles
+  (springboardservices), taille (`browse` StaticDiskUsage), filtre
+  sideload/store/all, recherche, tri, désinstallation.
+- **Fichiers** (`files.rs`) — espace Média par AFC : parcourir, télécharger &
+  partager, importer, **renommer** (`px_fs_rename`), supprimer, créer un dossier,
+  recherche, tri, **aperçu QuickLook**.
+- **Sources** (Swift) — magasin façon AltStore : on ajoute l'URL d'une source
+  (JSON), Parallax en affiche le catalogue ; « Envoyer à l'Installeur » dépose
+  l'app via `InstallInbox` — l'Installeur garde le monopole de la signature.
+- **Atelier** (`inspect.rs`, `px_ipa_inspect`) — inspection **locale** d'un IPA
+  (sans tunnel) : archis + chiffrement (Mach-O brut), frameworks/extensions,
+  profil de provisionnement (plist du CMS). Envoi direct à l'Installeur.
+- **Profils** (`profiles.rs`, misagent) et **Diagnostic** (`diagnostics.rs`,
+  diagnostics_relay : batterie, modèle, iOS).
+- Guide de **premier lancement** (VPN loopback, jumelage, compte) montré une fois.
 - CI : Rust, symboles, xcodegen, archive, IPA. Release taguée avec l'IPA.
 
 **À faire :**
 
-1. **Refonte du design (forme/style)** — demandée par l'auteur, à lancer à son
-   signal explicite. `DesignSystem.swift` reste la référence ; ne pas le
-   réécrire à l'aveugle.
-2. **Distribution publique** — `web/install/` a trois emplacements de
+1. **Distribution publique** — `web/install/` a trois emplacements de
    certificats interchangeables, désactivés tant qu'aucun certificat de
    signature légitime n'est fourni. L'auteur alimente les IPA signés.
+
+**Fait récemment :**
+
+- **Refonte du design** inspirée de Feather, appliquée partout (grands titres,
+  capsules, verre, pastilles). `DesignSystem.swift` reste la référence unique.
+- Signature **hors-ligne** par certificat importé (`.p12` + `.mobileprovision`,
+  `sign_offline.rs`) — sans compte Apple. Renommage / changement d'identifiant
+  pour **dupliquer** une app.
 
 **Pièges corrigés (pour ne pas les rejouer) :**
 

@@ -41,6 +41,20 @@ builds produits publiquement par **GitHub Actions**.
 - **Propriétés d'app** : renommer, changer l'identifiant pour **dupliquer** une
   app (deux copies côte à côte).
 
+### 🛍️ Sources — un magasin d'apps
+- Ajoute l'**URL d'une source** (format AltStore / SideStore) et parcours son
+  catalogue : icône, développeur, description, version.
+- **Recherche** dans toutes les sources, **fiche produit** par app.
+- « **Envoyer à l'Installeur** » dépose l'IPA dans l'Installeur, où tu choisis
+  la signature — Sources ne fait que la vitrine.
+
+### 🔧 Atelier — inspecter un IPA avant de l'installer
+- Importe un `.ipa` (aucun appareil requis) et Parallax le radiographie :
+  **architectures** (arm64 / arm64e…), **chiffrement** (déchiffré ou verrouillé
+  App Store), **frameworks & extensions** embarqués, **bibliothèques liées**.
+- **Profil de provisionnement** : type, équipe, validité, `get-task-allow`.
+- De là, **envoi direct à l'Installeur**, ou partage du rapport.
+
 ### 📚 Bibliothèque — gérer les apps installées
 - **Liste** de toutes les apps (icônes réelles, taille de stockage, version).
 - **Filtre** : sideloadées (cert/IPA) · App Store · toutes. **Recherche** et
@@ -49,8 +63,9 @@ builds produits publiquement par **GitHub Actions**.
 
 ### 📁 Fichiers — l'espace Média de l'appareil
 - **Parcourir** `/var/mobile/Media` (photos, téléchargements, fichiers) par AFC.
-- **Télécharger & partager**, **importer**, **supprimer**, **créer un dossier**,
-  jauge de **stockage**.
+- **Télécharger & partager**, **aperçu** (QuickLook), **importer**, **renommer**,
+  **supprimer**, **créer un dossier**, **recherche** et **tri**, jauge de
+  **stockage**.
 
 ### 🔐 Profils & 🩺 diagnostic
 - **Profils de provisionnement** : liste (nom, app id, validité) et **retrait**
