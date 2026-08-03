@@ -121,6 +121,33 @@ pub unsafe extern "C" fn px_fs_mkdir(tunnel: *mut PxTunnel, path: *const c_char)
     })
 }
 
+/// Renomme (ou déplace) `from` vers `to`. `PX_OK` ou code d'erreur.
+///
+/// # Safety
+/// `tunnel` valide ; chaînes UTF-8 NUL.
+#[no_mangle]
+pub unsafe extern "C" fn px_fs_rename(
+    tunnel: *mut PxTunnel,
+    from: *const c_char,
+    to: *const c_char,
+) -> c_int {
+    clear_last_error();
+    let (Some(f), Some(t)) = (
+        cstr(from).filter(|p| !p.is_empty()),
+        cstr(to).filter(|p| !p.is_empty()),
+    ) else {
+        set_last_error("px_fs_rename : chemin nul");
+        return PX_ERR_ARG;
+    };
+    guard("px_fs_rename", PX_ERR_INTERNAL, || match imp::rename(tunnel, &f, &t) {
+        Ok(()) => PX_OK,
+        Err(e) => {
+            set_last_error(e);
+            PX_ERR_INTERNAL
+        }
+    })
+}
+
 /// Infos de stockage de l'espace Média : JSON `{model,totalBytes,freeBytes}`.
 ///
 /// # Safety
@@ -274,6 +301,16 @@ mod imp {
             afc.mk_dir(path)
                 .await
                 .map_err(|e| format!("création de {path} : {e}"))
+        })
+    }
+
+    pub unsafe fn rename(tunnel: *mut PxTunnel, from: &str, to: &str) -> Result<(), String> {
+        let tun = crate::tunnel::tunnel_inner(tunnel);
+        tun.runtime.block_on(async {
+            let mut afc = connect_afc(&mut tun.rsd, &mut tun.adapter).await?;
+            afc.rename(from, to)
+                .await
+                .map_err(|e| format!("renommage de {from} : {e}"))
         })
     }
 

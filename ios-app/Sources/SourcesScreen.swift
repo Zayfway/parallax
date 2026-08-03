@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ONGLET SOURCES
@@ -420,6 +421,11 @@ private struct SourceAppDetail: View {
                         Label("Envoyer à l'Installeur", systemImage: "square.and.arrow.down")
                     }
                     .buttonStyle(ProminentButtonStyle())
+
+                    Button { UIPasteboard.general.string = url } label: {
+                        Label("Copier le lien de téléchargement", systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
 
                     Text("L'IPA s'ouvre dans l'Installeur, où tu choisis la signature (compte Apple ou certificat) avant de poser l'app.")
                         .font(PX.Font.body(11.5))

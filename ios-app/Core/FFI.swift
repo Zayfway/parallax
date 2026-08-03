@@ -252,6 +252,11 @@ extension FFI {
         if rc != PX_OK { throw Failure(code: rc, detail: lastError) }
     }
 
+    static func renameFile(tunnel: OpaquePointer, from: String, to: String) throws {
+        let rc = from.withCString { f in to.withCString { t in px_fs_rename(tunnel, f, t) } }
+        if rc != PX_OK { throw Failure(code: rc, detail: lastError) }
+    }
+
     static func storageInfo(tunnel: OpaquePointer) -> DeviceStorage? {
         guard let raw = px_fs_storage(tunnel) else { return nil }
         defer { px_string_free(raw) }

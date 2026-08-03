@@ -30,12 +30,42 @@ struct FilesScreen: View {
     @State private var fileMenu: DeviceFile?
     @State private var share: ShareItem?
     @State private var preview: ShareItem?
+    @State private var query = ""
+    @State private var sort: FileSort = .name
+    @State private var renaming: DeviceFile?
+    @State private var renameText = ""
+
+    /// Tri de la liste. Les dossiers restent toujours groupés en tête.
+    private enum FileSort: String, CaseIterable {
+        case name = "Nom"
+        case size = "Taille"
+        case kind = "Type"
+    }
     @State private var showingUpload = false
     @State private var showingNewFolder = false
     @State private var newFolderName = ""
 
     private var currentPath: String {
         path.isEmpty ? "/" : "/" + path.joined(separator: "/")
+    }
+
+    /// Entrées après recherche et tri — dossiers toujours en tête.
+    private var displayed: [DeviceFile] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        let base = q.isEmpty ? entries : entries.filter { $0.name.lowercased().contains(q) }
+        return base.sorted { a, b in
+            if a.isDir != b.isDir { return a.isDir }   // dossiers d'abord
+            switch sort {
+            case .name: return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+            case .size: return a.size > b.size
+            case .kind:
+                let ea = (a.name as NSString).pathExtension.lowercased()
+                let eb = (b.name as NSString).pathExtension.lowercased()
+                return ea == eb
+                    ? a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+                    : ea < eb
+            }
+        }
     }
 
     var body: some View {
@@ -62,6 +92,8 @@ struct FilesScreen: View {
         }
         .animation(PX.Motion.settle, value: entries)
         .animation(PX.Motion.settle, value: loading)
+        .animation(PX.Motion.settle, value: query)
+        .animation(PX.Motion.settle, value: sort)
         .sheet(isPresented: $showingUpload) {
             DocumentPicker(contentTypes: [.item, .data], allowsMultiple: false, asCopy: true) { urls in
                 showingUpload = false
@@ -92,10 +124,18 @@ struct FilesScreen: View {
             Button("Télécharger et partager") {
                 let f = file; fileMenu = nil; Task { await shareFile(f) }
             }
+            Button("Renommer") {
+                renameText = file.name; renaming = file; fileMenu = nil
+            }
             Button("Supprimer", role: .destructive) {
                 pendingDelete = file; fileMenu = nil
             }
             Button("Annuler", role: .cancel) { fileMenu = nil }
+        }
+        .alert("Renommer", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField("Nom", text: $renameText)
+            Button("Renommer") { if let f = renaming { renaming = nil; Task { await rename(f, to: renameText) } } }
+            Button("Annuler", role: .cancel) { renaming = nil }
         }
         .confirmationDialog(
             "Supprimer ?",
@@ -114,6 +154,9 @@ struct FilesScreen: View {
         Menu {
             Button { showingUpload = true } label: { Label("Importer un fichier", systemImage: "square.and.arrow.up") }
             Button { newFolderName = ""; showingNewFolder = true } label: { Label("Nouveau dossier", systemImage: "folder.badge.plus") }
+            Picker("Trier par", selection: $sort) {
+                ForEach(FileSort.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
             Button { Task { await load() } } label: { Label("Rafraîchir", systemImage: "arrow.clockwise") }
         } label: {
             Image(systemName: "ellipsis.circle")
@@ -147,18 +190,47 @@ struct FilesScreen: View {
                 banner("folder", PX.Color.inkFaint, "Dossier vide", "Rien ici.")
                     .appear(3, shown)
             } else {
-                VStack(spacing: 0) {
-                    ForEach(Array(entries.enumerated()), id: \.element.id) { index, file in
-                        row(file)
-                        if index < entries.count - 1 {
-                            Divider().overlay(PX.Color.horizon).padding(.leading, 52)
+                if entries.count > 6 { searchField.appear(3, shown) }
+                let items = displayed
+                if items.isEmpty {
+                    banner("magnifyingglass", PX.Color.inkFaint, "Aucun résultat",
+                           "Rien ne correspond à « \(query) ».").appear(4, shown)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(Array(items.enumerated()), id: \.element.id) { index, file in
+                            row(file)
+                            if index < items.count - 1 {
+                                Divider().overlay(PX.Color.horizon).padding(.leading, 52)
+                            }
                         }
                     }
+                    .glassCard()
+                    .appear(4, shown)
                 }
-                .glassCard()
-                .appear(3, shown)
             }
         }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: PX.Space.tight) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(PX.Color.inkFaint)
+            TextField("Filtrer ce dossier", text: $query)
+                .font(PX.Font.body(15))
+                .foregroundStyle(PX.Color.ink)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+            if !query.isEmpty {
+                Button { query = "" } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(PX.Color.inkFaint)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, PX.Space.base)
+        .padding(.vertical, 11)
+        .glassCard()
     }
 
     private var breadcrumb: some View {
@@ -350,6 +422,21 @@ struct FilesScreen: View {
         do {
             try await onBackground { try FFI.deleteFile(tunnel: tunnel, path: file.path) }
             withAnimation(PX.Motion.settle) { entries.removeAll { $0.id == file.id } }
+        } catch {
+            failure = error.localizedDescription
+        }
+    }
+
+    private func rename(_ file: DeviceFile, to newName: String) async {
+        let clean = newName.trimmingCharacters(in: .whitespaces)
+        guard let tunnel = connection.tunnelPointer, !busy,
+              !clean.isEmpty, clean != file.name, !clean.contains("/") else { return }
+        busy = true
+        defer { busy = false }
+        let target = currentPath == "/" ? "/\(clean)" : "\(currentPath)/\(clean)"
+        do {
+            try await onBackground { try FFI.renameFile(tunnel: tunnel, from: file.path, to: target) }
+            await load()
         } catch {
             failure = error.localizedDescription
         }

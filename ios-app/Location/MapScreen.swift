@@ -2,6 +2,7 @@ import SwiftUI
 import MapKit
 import CoreLocation
 import UniformTypeIdentifiers
+import UIKit
 
 /// Onglet Carte.
 ///
@@ -551,6 +552,12 @@ struct MapScreen: View {
                         sharePoint = SharePoint(coordinate: fix)
                     } label: {
                         Label("Partager ce point", systemImage: "square.and.arrow.up")
+                    }
+                    Button {
+                        UIPasteboard.general.string =
+                            String(format: "%.6f, %.6f", fix.latitude, fix.longitude)
+                    } label: {
+                        Label("Copier les coordonnées", systemImage: "doc.on.doc")
                     }
                 }
             } label: {

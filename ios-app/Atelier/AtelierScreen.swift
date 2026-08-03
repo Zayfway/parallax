@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import UIKit
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ONGLET ATELIER
@@ -107,6 +108,46 @@ struct AtelierScreen: View {
         .buttonStyle(ProminentButtonStyle())
         .appear(7, shown)
         .disabled(ipaURL == nil)
+
+        HStack(spacing: PX.Space.snug) {
+            Button {
+                UIPasteboard.general.string = info.bundleId
+            } label: {
+                Label("Copier l'identifiant", systemImage: "doc.on.doc")
+            }
+            .buttonStyle(SecondaryButtonStyle())
+
+            ShareLink(item: reportText(info)) {
+                Label("Partager le rapport", systemImage: "square.and.arrow.up")
+                    .font(PX.Font.display(14, .semibold))
+                    .foregroundStyle(PX.Color.inkMuted)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 13)
+                    .background(Capsule(style: .continuous).fill(.white.opacity(0.05)))
+                    .overlay(Capsule(style: .continuous).strokeBorder(PX.Color.horizon, lineWidth: 1))
+            }
+        }
+        .appear(8, shown)
+    }
+
+    /// Résumé texte de l'inspection, pour le presse-papiers / le partage.
+    private func reportText(_ info: IPAInfo) -> String {
+        var lines: [String] = [
+            "\(info.name) — inspection Parallax",
+            "Identifiant : \(info.bundleId)",
+            "Version : \(info.versionText)",
+            "iOS minimum : \(info.minOS.isEmpty ? "—" : info.minOS)",
+            "Architectures : \(info.archs.isEmpty ? "—" : info.archs.joined(separator: ", "))",
+            "Binaire : \(info.encryptionText)",
+            "Taille : \(info.fileSizeText)",
+        ]
+        if !info.frameworks.isEmpty {
+            lines.append("Frameworks : \(info.frameworks.joined(separator: ", "))")
+        }
+        if let p = info.provision {
+            lines.append("Profil : \(p.typeLabel) · \(p.team) · \(p.validityText)")
+        }
+        return lines.joined(separator: "\n")
     }
 
     private func identityCard(_ info: IPAInfo) -> some View {
