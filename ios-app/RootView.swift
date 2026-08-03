@@ -74,6 +74,10 @@ struct RootView: View {
                 .tabItem { Label("Bibliothèque", systemImage: "square.stack.3d.up") }
                 .tag(5)
 
+            FilesScreen()
+                .tabItem { Label("Fichiers", systemImage: "folder") }
+                .tag(6)
+
             MapScreen()
                 .tabItem { Label("Carte", systemImage: "location.viewfinder") }
                 .tag(2)

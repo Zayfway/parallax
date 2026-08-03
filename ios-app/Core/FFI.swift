@@ -220,6 +220,65 @@ extension FFI {
         defer { px_string_free(raw) }
         return Data(base64Encoded: String(cString: raw))
     }
+
+    // MARK: - Fichiers (espace Média, AFC)
+
+    static func listFiles(tunnel: OpaquePointer, path: String) throws -> [DeviceFile] {
+        guard let raw = path.withCString({ px_fs_list(tunnel, $0) }) else {
+            throw Failure(code: PX_ERR_INTERNAL, detail: lastError)
+        }
+        defer { px_string_free(raw) }
+        let json = Data(String(cString: raw).utf8)
+        return (try? JSONDecoder().decode([DeviceFile].self, from: json)) ?? []
+    }
+
+    static func downloadFile(tunnel: OpaquePointer, remote: String, dest: String) throws {
+        let rc = remote.withCString { r in dest.withCString { d in px_fs_download(tunnel, r, d) } }
+        if rc != PX_OK { throw Failure(code: rc, detail: lastError) }
+    }
+
+    static func uploadFile(tunnel: OpaquePointer, local: String, remote: String) throws {
+        let rc = local.withCString { l in remote.withCString { r in px_fs_upload(tunnel, l, r) } }
+        if rc != PX_OK { throw Failure(code: rc, detail: lastError) }
+    }
+
+    static func deleteFile(tunnel: OpaquePointer, path: String) throws {
+        let rc = path.withCString { px_fs_delete(tunnel, $0) }
+        if rc != PX_OK { throw Failure(code: rc, detail: lastError) }
+    }
+
+    static func makeDir(tunnel: OpaquePointer, path: String) throws {
+        let rc = path.withCString { px_fs_mkdir(tunnel, $0) }
+        if rc != PX_OK { throw Failure(code: rc, detail: lastError) }
+    }
+
+    static func storageInfo(tunnel: OpaquePointer) -> DeviceStorage? {
+        guard let raw = px_fs_storage(tunnel) else { return nil }
+        defer { px_string_free(raw) }
+        return try? JSONDecoder().decode(DeviceStorage.self, from: Data(String(cString: raw).utf8))
+    }
+}
+
+/// Une entrée du système de fichiers de l'appareil (espace Média).
+struct DeviceFile: Codable, Identifiable, Equatable {
+    let name: String
+    let path: String
+    let isDir: Bool
+    let size: Int
+    let kind: String
+    var id: String { path }
+    var sizeText: String {
+        guard size > 0 else { return "" }
+        return ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
+    }
+}
+
+/// Infos de stockage de l'espace Média.
+struct DeviceStorage: Codable {
+    let model: String
+    let totalBytes: Int
+    let freeBytes: Int
+    var usedBytes: Int { max(0, totalBytes - freeBytes) }
 }
 
 /// Une app installée, telle que rendue par `px_apps_list`.
