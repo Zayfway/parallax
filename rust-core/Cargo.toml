@@ -88,7 +88,7 @@ features = [
   "core_device_proxy", "pair", "usbmuxd",
   "installation_proxy", "afc", "house_arrest", "misagent",
   "dvt", "location_simulation", "mobile_image_mounter", "tss",
-  "heartbeat", "aws-lc", "springboardservices",
+  "heartbeat", "aws-lc", "springboardservices", "diagnostics_relay",
 ]
 
 [dependencies.isideload]

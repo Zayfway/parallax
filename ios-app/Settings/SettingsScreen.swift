@@ -26,6 +26,8 @@ struct SettingsScreen: View {
     @State private var shown = false
     /// La liste RSD est repliée par défaut (l'afficher entière alourdit l'écran).
     @State private var servicesExpanded = false
+    /// Diagnostic appareil (batterie, modèle, iOS) via le tunnel.
+    @State private var deviceInfo: DeviceInfo?
 
     // MARK: - Phase
 
@@ -98,6 +100,10 @@ struct SettingsScreen: View {
                     statusBanner
                         .appear(1, shown)
 
+                    if let deviceInfo {
+                        deviceCard(deviceInfo).appear(2, shown)
+                    }
+
                     if !connection.services.isEmpty {
                         servicesCard.appear(2, shown)
                     }
@@ -115,6 +121,70 @@ struct SettingsScreen: View {
         .animation(PX.Motion.settle, value: connection.tunnelState)
         .animation(PX.Motion.acquire, value: connection.services.count)
         .task { interfaces = DeviceConnection.activeInterfaces() }
+        .task(id: connection.services.count) { await loadDevice() }
+    }
+
+    /// Charge le diagnostic si le lien est déjà établi (sans le forcer ici).
+    private func loadDevice() async {
+        guard let tunnel = connection.tunnelPointer, deviceInfo == nil else { return }
+        let info = await withCheckedContinuation { (c: CheckedContinuation<DeviceInfo?, Never>) in
+            DispatchQueue.global(qos: .userInitiated).async { c.resume(returning: FFI.deviceInfo(tunnel: tunnel)) }
+        }
+        if let info { withAnimation(PX.Motion.settle) { deviceInfo = info } }
+    }
+
+    /// Carte diagnostic : nom, modèle, iOS, batterie.
+    private func deviceCard(_ info: DeviceInfo) -> some View {
+        VStack(alignment: .leading, spacing: PX.Space.snug) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(info.name.isEmpty ? "Appareil" : info.name)
+                        .font(PX.Font.display(16, .semibold))
+                        .foregroundStyle(PX.Color.ink)
+                    Text("\(info.model) · iOS \(info.iosVersion) (\(info.build))")
+                        .font(PX.Font.mono(11))
+                        .foregroundStyle(PX.Color.inkMuted)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
+                Spacer(minLength: PX.Space.tight)
+                if info.battery >= 0 {
+                    HStack(spacing: 5) {
+                        Image(systemName: batteryIcon(info.battery))
+                            .font(.system(size: 14, weight: .semibold))
+                        Text(info.batteryText)
+                            .font(PX.Font.mono(13, .semibold))
+                    }
+                    .foregroundStyle(batteryTint(info.battery))
+                }
+            }
+
+            if info.battery >= 0 {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(PX.Color.night.opacity(0.55))
+                        Capsule().fill(batteryTint(info.battery))
+                            .frame(width: geo.size.width * CGFloat(info.battery) / 100)
+                    }
+                }
+                .frame(height: 4)
+            }
+        }
+        .padding(PX.Space.base)
+        .glassCard()
+    }
+
+    private func batteryIcon(_ level: Int) -> String {
+        switch level {
+        case ..<10: return "battery.0"
+        case ..<50: return "battery.25"
+        default:    return "battery.100"
+        }
+    }
+
+    /// Vert au-dessus de 20 %, rouge en dessous. Jamais d'ambre (réservée au spoof).
+    private func batteryTint(_ level: Int) -> Color {
+        level <= 20 ? PX.Color.alert : PX.Color.verdant
     }
 
     /// Ce que l'appareil annonce, mot pour mot. En mono parce que rien ici n'a

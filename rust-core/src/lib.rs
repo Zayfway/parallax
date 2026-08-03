@@ -23,6 +23,7 @@ use std::sync::Mutex;
 
 pub mod account;
 pub mod apps;
+pub mod diagnostics;
 pub mod files;
 pub mod inject;
 pub mod install;

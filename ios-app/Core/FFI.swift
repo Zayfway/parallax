@@ -273,6 +273,24 @@ extension FFI {
         let rc = uuid.withCString { px_profile_remove(tunnel, $0) }
         if rc != PX_OK { throw Failure(code: rc, detail: lastError) }
     }
+
+    // MARK: - Diagnostic appareil (diagnostics_relay)
+
+    static func deviceInfo(tunnel: OpaquePointer) -> DeviceInfo? {
+        guard let raw = px_device_info(tunnel) else { return nil }
+        defer { px_string_free(raw) }
+        return try? JSONDecoder().decode(DeviceInfo.self, from: Data(String(cString: raw).utf8))
+    }
+}
+
+/// Diagnostic appareil : batterie et infos système.
+struct DeviceInfo: Codable, Equatable {
+    let battery: Int
+    let model: String
+    let iosVersion: String
+    let build: String
+    let name: String
+    var batteryText: String { battery >= 0 ? "\(battery) %" : "—" }
 }
 
 /// Un profil de provisionnement installé.
