@@ -219,8 +219,20 @@ struct InstalledApp: Codable, Identifiable, Equatable {
     let name: String
     let version: String
     let build: String
-    let type: String
+    /// « sideloaded » (dev/entreprise/IPA), « store » (App Store) ou « system ».
+    let source: String
+    /// Espace occupé (statique + dynamique), en octets.
+    let sizeBytes: Int
     var id: String { bundleId }
+
+    var isSideloaded: Bool { source == "sideloaded" }
+    var isStore: Bool { source == "store" }
+
+    /// Taille lisible (« 128 Mo »), vide si inconnue.
+    var sizeText: String {
+        guard sizeBytes > 0 else { return "" }
+        return ByteCountFormatter.string(fromByteCount: Int64(sizeBytes), countStyle: .file)
+    }
 }
 
 /// Emprunte quatre chaînes en C-strings à la fois, pour éviter une pyramide de

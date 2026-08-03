@@ -24,6 +24,8 @@ struct SettingsScreen: View {
     @AppStorage("anisetteURL") private var anisetteURL = "https://ani.sidestore.io"
     @State private var interfaces: [(name: String, address: String)] = []
     @State private var shown = false
+    /// La liste RSD est repliée par défaut (l'afficher entière alourdit l'écran).
+    @State private var servicesExpanded = false
 
     // MARK: - Phase
 
@@ -123,25 +125,41 @@ struct SettingsScreen: View {
     /// diagnostic, pas une étape.
     private var servicesCard: some View {
         VStack(alignment: .leading, spacing: PX.Space.tight) {
-            HStack {
-                SectionLabel("Services RSD")
-                Spacer()
-                Tag("\(connection.services.count)", color: PX.Color.verdant,
-                    icon: "checkmark.circle.fill")
-            }
-
-            ForEach(connection.services.sorted(by: { $0.key < $1.key }), id: \.key) { name, port in
-                HStack(alignment: .top, spacing: PX.Space.tight) {
-                    Text(name)
-                        .font(PX.Font.mono(10.5))
-                        .foregroundStyle(PX.Color.inkMuted)
-                        .lineLimit(1)
-                        .truncationMode(.head)
-                    Spacer(minLength: PX.Space.tight)
-                    Text("\(port)")
-                        .font(PX.Font.mono(10.5, .semibold))
+            // En-tête cliquable : la liste RSD est **repliée par défaut**. En
+            // afficher des dizaines d'un coup alourdit le rendu ; on ne la
+            // déroule qu'à la demande.
+            Button {
+                withAnimation(PX.Motion.settle) { servicesExpanded.toggle() }
+            } label: {
+                HStack {
+                    SectionLabel("Services RSD")
+                    Spacer()
+                    Tag("\(connection.services.count)", color: PX.Color.verdant,
+                        icon: "checkmark.circle.fill")
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(PX.Color.inkFaint)
+                        .rotationEffect(.degrees(servicesExpanded ? 90 : 0))
                 }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if servicesExpanded {
+                ForEach(connection.services.sorted(by: { $0.key < $1.key }), id: \.key) { name, port in
+                    HStack(alignment: .top, spacing: PX.Space.tight) {
+                        Text(name)
+                            .font(PX.Font.mono(10.5))
+                            .foregroundStyle(PX.Color.inkMuted)
+                            .lineLimit(1)
+                            .truncationMode(.head)
+                        Spacer(minLength: PX.Space.tight)
+                        Text("\(port)")
+                            .font(PX.Font.mono(10.5, .semibold))
+                            .foregroundStyle(PX.Color.inkFaint)
+                    }
+                }
+                .padding(.top, 2)
             }
         }
         .padding(PX.Space.base)

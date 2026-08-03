@@ -82,7 +82,10 @@ mod imp {
 
     pub unsafe fn list(tunnel: *mut PxTunnel) -> Result<String, String> {
         let tun = crate::tunnel::tunnel_inner(tunnel);
-        let apps = tun.runtime.block_on(async {
+        // `browse` avec ReturnAttributes plutôt que `get_apps` : on demande
+        // explicitement l'usage disque et l'identité du signataire, qui ne sont
+        // pas garantis dans un Lookup par défaut.
+        let list = tun.runtime.block_on(async {
             let name = service_name();
             let port = tun
                 .rsd
@@ -98,33 +101,79 @@ mod imp {
             let mut client = InstallationProxyClient::from_stream(stream)
                 .await
                 .map_err(|e| format!("canal installation_proxy : {e}"))?;
+
+            let attrs = [
+                "CFBundleIdentifier",
+                "CFBundleDisplayName",
+                "CFBundleName",
+                "CFBundleShortVersionString",
+                "CFBundleVersion",
+                "ApplicationType",
+                "SignerIdentity",
+                "StaticDiskUsage",
+                "DynamicDiskUsage",
+            ];
+            let mut opts = plist::Dictionary::new();
+            opts.insert("ApplicationType".into(), plist::Value::String("User".into()));
+            opts.insert(
+                "ReturnAttributes".into(),
+                plist::Value::Array(
+                    attrs.iter().map(|s| plist::Value::String(s.to_string())).collect(),
+                ),
+            );
             client
-                .get_apps(Some("User"), None)
+                .browse(Some(plist::Value::Dictionary(opts)))
                 .await
                 .map_err(|e| format!("liste des apps : {e}"))
         })?;
 
-        // Sérialisation : on ne garde que ce que la Bibliothèque affiche.
-        let mut out: Vec<serde_json::Value> = Vec::with_capacity(apps.len());
-        for (bundle_id, value) in apps {
-            let dict = value.as_dictionary();
-            let field = |key: &str| -> Option<String> {
-                dict.and_then(|d| d.get(key))
-                    .and_then(|v| v.as_string())
-                    .map(|s| s.to_string())
+        let mut out: Vec<serde_json::Value> = Vec::with_capacity(list.len());
+        for value in &list {
+            let dict = match value.as_dictionary() {
+                Some(d) => d,
+                None => continue,
             };
-            let name = field("CFBundleDisplayName")
-                .or_else(|| field("CFBundleName"))
+            let text = |key: &str| -> Option<String> {
+                dict.get(key).and_then(|v| v.as_string()).map(|s| s.to_string())
+            };
+            let uint = |key: &str| -> u64 {
+                dict.get(key)
+                    .and_then(|v| v.as_unsigned_integer().or_else(|| v.as_signed_integer().map(|i| i.max(0) as u64)))
+                    .unwrap_or(0)
+            };
+
+            let bundle_id = match text("CFBundleIdentifier") {
+                Some(b) if !b.is_empty() => b,
+                _ => continue,
+            };
+            let name = text("CFBundleDisplayName")
+                .filter(|s| !s.is_empty())
+                .or_else(|| text("CFBundleName"))
                 .unwrap_or_else(|| bundle_id.clone());
+
+            // App Store ⟺ signataire « Apple iPhone OS Application Signing ».
+            // Le reste des apps utilisateur est sideloadé (dev, entreprise, IPA).
+            let signer = text("SignerIdentity").unwrap_or_default();
+            let app_type = text("ApplicationType").unwrap_or_default();
+            let source = if app_type == "System" {
+                "system"
+            } else if signer.contains("Apple iPhone OS Application Signing") {
+                "store"
+            } else {
+                "sideloaded"
+            };
+
+            let size = uint("StaticDiskUsage") + uint("DynamicDiskUsage");
+
             out.push(serde_json::json!({
                 "bundleId": bundle_id,
                 "name": name,
-                "version": field("CFBundleShortVersionString").unwrap_or_default(),
-                "build": field("CFBundleVersion").unwrap_or_default(),
-                "type": field("ApplicationType").unwrap_or_default(),
+                "version": text("CFBundleShortVersionString").unwrap_or_default(),
+                "build": text("CFBundleVersion").unwrap_or_default(),
+                "source": source,
+                "sizeBytes": size,
             }));
         }
-        // Tri alphabétique, insensible à la casse — une liste d'apps se lit ainsi.
         out.sort_by(|a, b| {
             a["name"]
                 .as_str()

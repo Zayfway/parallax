@@ -21,6 +21,22 @@ struct LibraryScreen: View {
     @State private var pendingUninstall: InstalledApp?
     @State private var busyID: String?
     @State private var shown = false
+    @State private var filter: AppFilter = .all
+
+    /// Filtre par provenance : tout, sideloadées (cert/IPA), ou App Store.
+    enum AppFilter: String, CaseIterable {
+        case all = "Toutes"
+        case sideloaded = "Sideloadées"
+        case store = "App Store"
+    }
+
+    private var filteredApps: [InstalledApp] {
+        switch filter {
+        case .all:        return apps
+        case .sideloaded: return apps.filter { $0.isSideloaded }
+        case .store:      return apps.filter { $0.isStore }
+        }
+    }
 
     var body: some View {
         ZStack {
@@ -96,22 +112,32 @@ struct LibraryScreen: View {
                    detail: "Installe une app depuis l'onglet Installer.")
                 .appear(1, shown)
         } else {
+            SegmentedRow(selection: $filter, options: AppFilter.allCases) { $0.rawValue }
+                .appear(1, shown)
+
             HStack {
-                SectionLabel("\(apps.count) app\(apps.count > 1 ? "s" : "")")
+                SectionLabel("\(filteredApps.count) app\(filteredApps.count > 1 ? "s" : "")")
                 Spacer()
             }
-            .appear(1, shown)
+            .appear(2, shown)
 
-            VStack(spacing: 0) {
-                ForEach(Array(apps.enumerated()), id: \.element.id) { index, app in
-                    appRow(app)
-                    if index < apps.count - 1 {
-                        Divider().overlay(PX.Color.horizon).padding(.leading, 56)
+            if filteredApps.isEmpty {
+                banner(icon: "line.3.horizontal.decrease.circle", tint: PX.Color.inkFaint,
+                       title: "Rien dans ce filtre",
+                       detail: "Aucune app \(filter.rawValue.lowercased()) trouvée.")
+                    .appear(3, shown)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(filteredApps.enumerated()), id: \.element.id) { index, app in
+                        appRow(app)
+                        if index < filteredApps.count - 1 {
+                            Divider().overlay(PX.Color.horizon).padding(.leading, 56)
+                        }
                     }
                 }
+                .glassCard()
+                .appear(3, shown)
             }
-            .glassCard()
-            .appear(2, shown)
         }
     }
 
@@ -133,10 +159,17 @@ struct LibraryScreen: View {
 
             Spacer(minLength: PX.Space.tight)
 
-            if !app.version.isEmpty {
-                Text("v\(app.version)")
-                    .font(PX.Font.mono(10.5, .medium))
-                    .foregroundStyle(PX.Color.inkMuted)
+            VStack(alignment: .trailing, spacing: 2) {
+                if !app.version.isEmpty {
+                    Text("v\(app.version)")
+                        .font(PX.Font.mono(10.5, .medium))
+                        .foregroundStyle(PX.Color.inkMuted)
+                }
+                if !app.sizeText.isEmpty {
+                    Text(app.sizeText)
+                        .font(PX.Font.mono(10))
+                        .foregroundStyle(PX.Color.inkFaint)
+                }
             }
 
             Button {
