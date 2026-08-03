@@ -112,7 +112,9 @@ extension FFI {
         dylibs: [String] = [],
         injectionPath: String = "@executable_path",
         injectionFolder: String = "Frameworks",
-        injectIntoExtensions: Bool = false
+        injectIntoExtensions: Bool = false,
+        customName: String = "",
+        customBundleID: String = ""
     ) throws -> String {
         // Tableau de C-strings pour les tweaks à injecter. strdup + free : plus
         // simple qu'un withCString imbriqué de longueur variable. Vide = aucune
@@ -124,16 +126,16 @@ extension FFI {
         let raw = ipaPath.withCString { ipa in
             device.udid.withCString { udid in
                 device.name.withCString { name in
-                    injectionPath.withCString { ipath in
-                        injectionFolder.withCString { ifolder in
-                            ptrs.withUnsafeBufferPointer { buf in
-                                px_install_ipa(
-                                    session, tunnel, ipa, udid, name,
-                                    buf.baseAddress, UInt(dylibs.count),
-                                    ipath, ifolder, injectIntoExtensions,
-                                    pxInstallProgress
-                                )
-                            }
+                    withCStrings(injectionPath, injectionFolder, customName, customBundleID) {
+                        ipath, ifolder, cname, cbundle in
+                        ptrs.withUnsafeBufferPointer { buf in
+                            px_install_ipa(
+                                session, tunnel, ipa, udid, name,
+                                buf.baseAddress, UInt(dylibs.count),
+                                ipath, ifolder, injectIntoExtensions,
+                                cname, cbundle,
+                                pxInstallProgress
+                            )
                         }
                     }
                 }
@@ -159,7 +161,9 @@ extension FFI {
         dylibs: [String] = [],
         injectionPath: String = "@executable_path",
         injectionFolder: String = "Frameworks",
-        injectIntoExtensions: Bool = false
+        injectIntoExtensions: Bool = false,
+        customName: String = "",
+        customBundleID: String = ""
     ) throws -> String {
         let owned = dylibs.map { strdup($0) }
         defer { owned.forEach { free($0) } }
@@ -169,16 +173,16 @@ extension FFI {
             p12Path.withCString { p12 in
                 p12Password.withCString { pass in
                     profilePath.withCString { prof in
-                        injectionPath.withCString { ipath in
-                            injectionFolder.withCString { ifolder in
-                                ptrs.withUnsafeBufferPointer { buf in
-                                    px_install_ipa_p12(
-                                        tunnel, ipa, p12, pass, prof,
-                                        buf.baseAddress, UInt(dylibs.count),
-                                        ipath, ifolder, injectIntoExtensions,
-                                        pxInstallProgress
-                                    )
-                                }
+                        withCStrings(injectionPath, injectionFolder, customName, customBundleID) {
+                            ipath, ifolder, cname, cbundle in
+                            ptrs.withUnsafeBufferPointer { buf in
+                                px_install_ipa_p12(
+                                    tunnel, ipa, p12, pass, prof,
+                                    buf.baseAddress, UInt(dylibs.count),
+                                    ipath, ifolder, injectIntoExtensions,
+                                    cname, cbundle,
+                                    pxInstallProgress
+                                )
                             }
                         }
                     }
@@ -188,6 +192,22 @@ extension FFI {
         guard let raw else { throw Failure(code: PX_ERR_INTERNAL, detail: lastError) }
         defer { px_string_free(raw) }
         return String(cString: raw)
+    }
+}
+
+/// Emprunte quatre chaînes en C-strings à la fois, pour éviter une pyramide de
+/// `withCString` imbriqués. Les pointeurs ne sont valides que dans `body`.
+func withCStrings<R>(
+    _ a: String, _ b: String, _ c: String, _ d: String,
+    _ body: (UnsafePointer<CChar>, UnsafePointer<CChar>,
+             UnsafePointer<CChar>, UnsafePointer<CChar>) -> R
+) -> R {
+    a.withCString { pa in
+        b.withCString { pb in
+            c.withCString { pc in
+                d.withCString { pd in body(pa, pb, pc, pd) }
+            }
+        }
     }
 }
 

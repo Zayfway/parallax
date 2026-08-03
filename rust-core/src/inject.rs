@@ -111,15 +111,34 @@ impl InjectOptions {
     }
 }
 
-/// Injecte chaque entrée dans l'IPA et rend le chemin d'un **nouvel** IPA
-/// modifié, prêt à être signé. Chaque entrée est un `.dylib` (palier 1) ou un
-/// `.deb` (palier 2/3). Si `inputs` est vide, rend l'IPA d'origine.
+/// Propriétés d'app à réécrire dans `Info.plist` avant signature.
+///
+/// - `display_name` : le nom sous l'icône (CFBundleDisplayName + CFBundleName).
+/// - `bundle_id` : l'identifiant (CFBundleIdentifier). Le changer permet de
+///   **dupliquer** une app (deux copies coexistent) — à condition que la
+///   signature l'autorise (compte Apple, ou profil wildcard).
+#[derive(Default)]
+pub struct AppProps {
+    pub display_name: Option<String>,
+    pub bundle_id: Option<String>,
+}
+
+impl AppProps {
+    fn is_empty(&self) -> bool {
+        self.display_name.is_none() && self.bundle_id.is_none()
+    }
+}
+
+/// Prépare l'IPA avant signature : injecte les tweaks (le cas échéant) et
+/// réécrit les propriétés d'app demandées. Rend le chemin d'un **nouvel** IPA,
+/// ou l'IPA d'origine s'il n'y a rien à faire.
 pub fn inject_dylibs(
     ipa_path: &str,
     inputs: &[String],
     opts: &InjectOptions,
+    props: &AppProps,
 ) -> Result<String, String> {
-    if inputs.is_empty() {
+    if inputs.is_empty() && props.is_empty() {
         return Ok(ipa_path.to_string());
     }
 
@@ -160,7 +179,7 @@ pub fn inject_dylibs(
         }
     }
 
-    if libs.is_empty() {
+    if !inputs.is_empty() && libs.is_empty() {
         return Err("aucun dylib trouvé dans ce qui a été fourni".into());
     }
 
@@ -168,6 +187,10 @@ pub fn inject_dylibs(
     extract_ipa(Path::new(ipa_path), &work)?;
     let app = find_app_dir(&work)?;
     let exe = main_executable(&app)?;
+
+    // Étapes d'injection : seulement s'il y a des dylibs. Une customisation de
+    // propriétés seule (renommage, identifiant) saute tout ce bloc.
+    if !libs.is_empty() {
     let frameworks = app.join(&opts.folder);
     std::fs::create_dir_all(&frameworks)
         .map_err(|e| format!("dossier {} : {e}", opts.folder))?;
@@ -259,6 +282,12 @@ pub fn inject_dylibs(
             }
         }
     }
+    } // fin du bloc d'injection (libs présents)
+
+    // 6b. Propriétés d'app (renommage, identifiant), le cas échéant.
+    if !props.is_empty() {
+        apply_app_props(&app, props)?;
+    }
 
     // 7. Re-zipper.
     let out = std::env::temp_dir().join(format!("px-injected-{}.ipa", std::process::id()));
@@ -318,6 +347,30 @@ fn wire_binary(
     }
     std::fs::write(exe, &macho).map_err(|e| format!("réécriture : {e}"))?;
     set_mode(exe, 0o755)
+}
+
+/// Réécrit les propriétés demandées dans l'`Info.plist` du bundle. Le nom sous
+/// l'icône suit CFBundleDisplayName **et** CFBundleName ; l'identifiant suit
+/// CFBundleIdentifier (le changer permet de faire cohabiter deux copies).
+fn apply_app_props(app: &Path, props: &AppProps) -> Result<(), String> {
+    let plist_path = app.join("Info.plist");
+    let mut value = plist::Value::from_file(&plist_path)
+        .map_err(|e| format!("Info.plist illisible : {e}"))?;
+    let dict = value
+        .as_dictionary_mut()
+        .ok_or_else(|| "Info.plist n'est pas un dictionnaire".to_string())?;
+
+    if let Some(name) = props.display_name.as_deref().filter(|s| !s.is_empty()) {
+        dict.insert("CFBundleDisplayName".into(), plist::Value::String(name.to_string()));
+        dict.insert("CFBundleName".into(), plist::Value::String(name.to_string()));
+    }
+    if let Some(id) = props.bundle_id.as_deref().filter(|s| !s.is_empty()) {
+        dict.insert("CFBundleIdentifier".into(), plist::Value::String(id.to_string()));
+    }
+
+    value
+        .to_file_binary(&plist_path)
+        .map_err(|e| format!("Info.plist non réécrit : {e}"))
 }
 
 /// Exécutables des extensions du bundle (`PlugIns/*.appex`).

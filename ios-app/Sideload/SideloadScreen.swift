@@ -90,6 +90,9 @@ struct SideloadScreen: View {
     @State private var injectionPath = "@executable_path"
     @State private var injectionFolder = "Frameworks"
     @State private var injectExtensions = false
+    /// Propriétés d'app : renommer, et changer l'identifiant pour dupliquer.
+    @State private var customAppName = ""
+    @State private var customBundleID = ""
 
     private let injectionPaths = ["@executable_path", "@loader_path", "@rpath"]
     private let injectionFolders = ["Frameworks", "Dylibs", "Tweaks"]
@@ -726,6 +729,43 @@ struct SideloadScreen: View {
                 .font(PX.Font.body(11))
                 .foregroundStyle(PX.Color.inkFaint)
                 .fixedSize(horizontal: false, vertical: true)
+
+            // ── Propriétés (renommer / dupliquer) ──
+            Text("Propriétés")
+                .font(PX.Font.display(20, .heavy))
+                .tracking(-0.2)
+                .foregroundStyle(PX.Color.ink)
+                .padding(.top, PX.Space.hair)
+
+            insetGroup {
+                HStack(spacing: PX.Space.snug) {
+                    IconTile(system: "character.cursor.ibeam", size: 32)
+                    TextField("Nom sous l'icône (optionnel)", text: $customAppName)
+                        .font(PX.Font.body(14))
+                        .foregroundStyle(PX.Color.ink)
+                        .autocorrectionDisabled()
+                }
+                .padding(.horizontal, PX.Space.base)
+                .padding(.vertical, 10)
+
+                rowDivider
+
+                HStack(spacing: PX.Space.snug) {
+                    IconTile(system: "square.on.square.dashed", size: 32)
+                    TextField("Identifiant, ex. com.app.copie (optionnel)", text: $customBundleID)
+                        .font(PX.Font.mono(12.5))
+                        .foregroundStyle(PX.Color.ink)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
+                .padding(.horizontal, PX.Space.base)
+                .padding(.vertical, 10)
+            }
+
+            Text("Renomme l'app à l'installation. Change l'identifiant pour faire cohabiter deux copies (ex. deux comptes) — nécessite une signature qui l'autorise : compte Apple, ou profil wildcard.")
+                .font(PX.Font.body(11))
+                .foregroundStyle(PX.Color.inkFaint)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -1017,7 +1057,9 @@ struct SideloadScreen: View {
                         ipaPath: ipa.path, device: device, dylibs: dylibs,
                         injectionPath: injectionPath,
                         injectionFolder: injectionFolder,
-                        injectIntoExtensions: injectExtensions
+                        injectIntoExtensions: injectExtensions,
+                        customName: target == .custom ? customAppName : "",
+                        customBundleID: target == .custom ? customBundleID : ""
                     )
                 }
             case .certificate:
@@ -1036,7 +1078,9 @@ struct SideloadScreen: View {
                         dylibs: dylibs,
                         injectionPath: injectionPath,
                         injectionFolder: injectionFolder,
-                        injectIntoExtensions: injectExtensions
+                        injectIntoExtensions: injectExtensions,
+                        customName: target == .custom ? customAppName : "",
+                        customBundleID: target == .custom ? customBundleID : ""
                     )
                 }
             }

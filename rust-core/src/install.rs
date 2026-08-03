@@ -76,6 +76,8 @@ pub unsafe extern "C" fn px_install_ipa(
     injection_path: *const c_char,
     injection_folder: *const c_char,
     inject_into_extensions: bool,
+    custom_name: *const c_char,
+    custom_bundle_id: *const c_char,
     on_progress: PxProgressCallback,
 ) -> *mut c_char {
     clear_last_error();
@@ -110,13 +112,16 @@ pub unsafe extern "C" fn px_install_ipa(
     // Options d'injection façon Feather ; valeurs par défaut si non fournies.
     let inject_path = cstr(injection_path).unwrap_or_default();
     let inject_folder = cstr(injection_folder).unwrap_or_default();
+    let cust_name = cstr(custom_name).unwrap_or_default();
+    let cust_bundle = cstr(custom_bundle_id).unwrap_or_default();
 
     #[cfg(all(feature = "device-account", feature = "device-pairing"))]
     {
         guard("px_install_ipa", ptr::null_mut(), || {
             match imp::install(
                 session, tunnel, &ipa, &udid, &name, &dylibs,
-                &inject_path, &inject_folder, inject_into_extensions, on_progress,
+                &inject_path, &inject_folder, inject_into_extensions,
+                &cust_name, &cust_bundle, on_progress,
             ) {
                 Ok(special) => CString::new(special)
                     .map(|c| c.into_raw())
@@ -131,7 +136,7 @@ pub unsafe extern "C" fn px_install_ipa(
     #[cfg(not(all(feature = "device-account", feature = "device-pairing")))]
     {
         let _ = (ipa, udid, name, dylibs, inject_path, inject_folder,
-                 inject_into_extensions, on_progress);
+                 inject_into_extensions, cust_name, cust_bundle, on_progress);
         set_last_error(
             "px_install_ipa : compilé sans --features device-account,device-pairing",
         );
@@ -160,6 +165,8 @@ pub unsafe extern "C" fn px_install_ipa_p12(
     injection_path: *const c_char,
     injection_folder: *const c_char,
     inject_into_extensions: bool,
+    custom_name: *const c_char,
+    custom_bundle_id: *const c_char,
     on_progress: PxProgressCallback,
 ) -> *mut c_char {
     clear_last_error();
@@ -186,6 +193,8 @@ pub unsafe extern "C" fn px_install_ipa_p12(
     };
     let inject_path = cstr(injection_path).unwrap_or_default();
     let inject_folder = cstr(injection_folder).unwrap_or_default();
+    let cust_name = cstr(custom_name).unwrap_or_default();
+    let cust_bundle = cstr(custom_bundle_id).unwrap_or_default();
 
     #[cfg(all(feature = "device-account", feature = "device-pairing"))]
     {
@@ -206,7 +215,8 @@ pub unsafe extern "C" fn px_install_ipa_p12(
         guard("px_install_ipa_p12", ptr::null_mut(), || {
             match imp::install_offline(
                 tunnel, &ipa, &p12_bytes, &password, &profile_bytes, &dylibs,
-                &inject_path, &inject_folder, inject_into_extensions, on_progress,
+                &inject_path, &inject_folder, inject_into_extensions,
+                &cust_name, &cust_bundle, on_progress,
             ) {
                 Ok(name) => CString::new(name)
                     .map(|c| c.into_raw())
@@ -221,7 +231,7 @@ pub unsafe extern "C" fn px_install_ipa_p12(
     #[cfg(not(all(feature = "device-account", feature = "device-pairing")))]
     {
         let _ = (ipa, p12p, profp, password, dylibs, inject_path, inject_folder,
-                 inject_into_extensions, on_progress);
+                 inject_into_extensions, cust_name, cust_bundle, on_progress);
         set_last_error("px_install_ipa_p12 : compilé sans --features device-account,device-pairing");
         ptr::null_mut()
     }
@@ -332,6 +342,8 @@ mod imp {
         inject_path: &str,
         inject_folder: &str,
         inject_into_extensions: bool,
+        custom_name: &str,
+        custom_bundle_id: &str,
         on_progress: PxProgressCallback,
     ) -> Result<String, String> {
         let sign = crate::account::session_inner(session);
@@ -357,10 +369,14 @@ mod imp {
         // ── 1.5. Injection de tweaks (si demandé) ─────────────────────────
         // On injecte AVANT de signer : sign_app signera aussi les dylibs
         // ajoutés. Rend un IPA temporaire modifié, qu'on nettoie après.
-        let ipa_to_sign = if dylibs.is_empty() {
+        let props = crate::inject::AppProps {
+            display_name: (!custom_name.is_empty()).then(|| custom_name.to_string()),
+            bundle_id: (!custom_bundle_id.is_empty()).then(|| custom_bundle_id.to_string()),
+        };
+        let ipa_to_sign = if dylibs.is_empty() && custom_name.is_empty() && custom_bundle_id.is_empty() {
             ipa.to_string()
         } else {
-            step(on_progress, 12, "Injection des tweaks");
+            step(on_progress, 12, "Préparation (tweaks, propriétés)");
             let mut opts = crate::inject::InjectOptions::default();
             if !inject_path.is_empty() {
                 opts.path_prefix = inject_path.to_string();
@@ -369,7 +385,7 @@ mod imp {
                 opts.folder = inject_folder.to_string();
             }
             opts.into_extensions = inject_into_extensions;
-            crate::inject::inject_dylibs(ipa, dylibs, &opts)?
+            crate::inject::inject_dylibs(ipa, dylibs, &opts, &props)?
         };
 
         // ── 2. Signature ──────────────────────────────────────────────────
@@ -379,7 +395,8 @@ mod imp {
                 .sign_app(ipa_to_sign.as_str().into(), None, false)
                 .await
         });
-        if !dylibs.is_empty() {
+        // Le temporaire préparé (tweaks/propriétés) ne resservira pas.
+        if ipa_to_sign != ipa {
             let _ = std::fs::remove_file(&ipa_to_sign);
         }
         let (signed_path, special) = signed.map_err(|e| format!("signature : {e}"))?;
@@ -460,15 +477,21 @@ mod imp {
         inject_path: &str,
         inject_folder: &str,
         inject_into_extensions: bool,
+        custom_name: &str,
+        custom_bundle_id: &str,
         on_progress: PxProgressCallback,
     ) -> Result<String, String> {
         let tun = crate::tunnel::tunnel_inner(tunnel);
 
-        // 1. Injection éventuelle des tweaks (avant signature).
-        let ipa_to_use = if dylibs.is_empty() {
+        // 1. Préparation éventuelle (tweaks + propriétés) avant signature.
+        let props = crate::inject::AppProps {
+            display_name: (!custom_name.is_empty()).then(|| custom_name.to_string()),
+            bundle_id: (!custom_bundle_id.is_empty()).then(|| custom_bundle_id.to_string()),
+        };
+        let ipa_to_use = if dylibs.is_empty() && custom_name.is_empty() && custom_bundle_id.is_empty() {
             ipa.to_string()
         } else {
-            step(on_progress, 10, "Injection des tweaks");
+            step(on_progress, 10, "Préparation (tweaks, propriétés)");
             let mut opts = crate::inject::InjectOptions::default();
             if !inject_path.is_empty() {
                 opts.path_prefix = inject_path.to_string();
@@ -477,7 +500,7 @@ mod imp {
                 opts.folder = inject_folder.to_string();
             }
             opts.into_extensions = inject_into_extensions;
-            crate::inject::inject_dylibs(ipa, dylibs, &opts)?
+            crate::inject::inject_dylibs(ipa, dylibs, &opts, &props)?
         };
 
         // 2. Extraction vers un dossier de travail.
@@ -486,7 +509,7 @@ mod imp {
         let _ = std::fs::remove_dir_all(&work);
         std::fs::create_dir_all(&work).map_err(|e| format!("dossier de travail : {e}"))?;
         crate::inject::extract_ipa(Path::new(&ipa_to_use), &work)?;
-        if !dylibs.is_empty() {
+        if ipa_to_use != ipa {
             let _ = std::fs::remove_file(&ipa_to_use);
         }
         let app = crate::inject::find_app_dir(&work)?;
