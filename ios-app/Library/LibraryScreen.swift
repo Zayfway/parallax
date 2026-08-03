@@ -20,6 +20,7 @@ struct LibraryScreen: View {
     @State private var loading = false
     @State private var failure: String?
     @State private var pendingUninstall: InstalledApp?
+    @State private var selectedApp: InstalledApp?
     @State private var busyID: String?
     @State private var shown = false
     @State private var filter: AppFilter = .all
@@ -124,6 +125,14 @@ struct LibraryScreen: View {
             Button("Annuler", role: .cancel) { pendingUninstall = nil }
         } message: { app in
             Text("\(app.name) et toutes ses données seront supprimées de l'appareil.")
+        }
+        .sheet(item: $selectedApp) { app in
+            AppDetailSheet(app: app, icon: icons[app.bundleId]) {
+                selectedApp = nil
+                pendingUninstall = app
+            }
+            .presentationDetents([.medium])
+            .presentationBackground(PX.Color.abyss)
         }
     }
 
@@ -284,6 +293,8 @@ struct LibraryScreen: View {
             .padding(.leading, PX.Space.hair)
         }
         .padding(PX.Space.base)
+        .contentShape(Rectangle())
+        .onTapGesture { selectedApp = app }
     }
 
     /// Vraie icône de l'app si chargée, tuile générique en attendant.
@@ -400,5 +411,74 @@ struct LibraryScreen: View {
                 catch { continuation.resume(throwing: error) }
             }
         }
+    }
+}
+
+/// Fiche détaillée d'une app installée.
+private struct AppDetailSheet: View {
+    let app: InstalledApp
+    let icon: UIImage?
+    let onUninstall: () -> Void
+
+    var body: some View {
+        VStack(spacing: PX.Space.base) {
+            Capsule().fill(PX.Color.horizon).frame(width: 38, height: 5).padding(.top, PX.Space.snug)
+
+            HStack(spacing: PX.Space.base) {
+                Group {
+                    if let icon {
+                        Image(uiImage: icon).resizable().scaledToFill()
+                    } else {
+                        Image(systemName: "app.fill").font(.system(size: 26)).foregroundStyle(PX.Color.azimuth)
+                    }
+                }
+                .frame(width: 60, height: 60)
+                .clipShape(RoundedRectangle(cornerRadius: 60 * 0.28, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 60 * 0.28, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(app.name).font(PX.Font.display(19, .semibold)).foregroundStyle(PX.Color.ink).lineLimit(1)
+                    Tag(app.isStore ? "App Store" : (app.isSideloaded ? "Sideloadée" : "Système"),
+                        color: app.isStore ? PX.Color.azimuth : PX.Color.verdant,
+                        icon: app.isStore ? "bag.fill" : "square.and.arrow.down.fill")
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            VStack(spacing: 0) {
+                detailRow("Identifiant", app.bundleId, mono: true)
+                Divider().overlay(PX.Color.horizon)
+                detailRow("Version", app.version.isEmpty ? "—" : "\(app.version) (\(app.build))", mono: false)
+                Divider().overlay(PX.Color.horizon)
+                detailRow("Stockage", app.sizeText.isEmpty ? "—" : app.sizeText, mono: false)
+            }
+            .padding(PX.Space.base)
+            .glassCard()
+
+            Button(role: .destructive) { onUninstall() } label: {
+                Label("Désinstaller", systemImage: "trash")
+            }
+            .buttonStyle(SecondaryButtonStyle(tint: PX.Color.alert))
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, PX.Space.loose)
+        .padding(.bottom, PX.Space.loose)
+        .frame(maxWidth: .infinity)
+    }
+
+    private func detailRow(_ label: String, _ value: String, mono: Bool) -> some View {
+        HStack(alignment: .top) {
+            Text(label).font(PX.Font.body(12.5)).foregroundStyle(PX.Color.inkMuted)
+            Spacer(minLength: PX.Space.base)
+            Text(value)
+                .font(mono ? PX.Font.mono(11.5) : PX.Font.body(12.5))
+                .foregroundStyle(PX.Color.ink)
+                .multilineTextAlignment(.trailing)
+                .textSelection(.enabled)
+        }
+        .padding(.vertical, 7)
     }
 }
