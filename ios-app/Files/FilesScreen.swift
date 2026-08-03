@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
+import QuickLook
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ONGLET FICHIERS
@@ -28,6 +29,7 @@ struct FilesScreen: View {
     @State private var pendingDelete: DeviceFile?
     @State private var fileMenu: DeviceFile?
     @State private var share: ShareItem?
+    @State private var preview: ShareItem?
     @State private var showingUpload = false
     @State private var showingNewFolder = false
     @State private var newFolderName = ""
@@ -70,6 +72,9 @@ struct FilesScreen: View {
         .sheet(item: $share) { item in
             ActivityView(items: [item.url])
         }
+        .sheet(item: $preview) { item in
+            QuickLookView(url: item.url).ignoresSafeArea()
+        }
         .alert("Nouveau dossier", isPresented: $showingNewFolder) {
             TextField("Nom", text: $newFolderName)
             Button("Créer") { Task { await createFolder() } }
@@ -81,6 +86,9 @@ struct FilesScreen: View {
             titleVisibility: .visible,
             presenting: fileMenu
         ) { file in
+            Button("Aperçu") {
+                let f = file; fileMenu = nil; Task { await previewFile(f) }
+            }
             Button("Télécharger et partager") {
                 let f = file; fileMenu = nil; Task { await shareFile(f) }
             }
@@ -321,6 +329,20 @@ struct FilesScreen: View {
         }
     }
 
+    private func previewFile(_ file: DeviceFile) async {
+        guard let tunnel = connection.tunnelPointer, !busy else { return }
+        busy = true
+        defer { busy = false }
+        let dest = URL.temporaryDirectory.appending(path: file.name)
+        try? FileManager.default.removeItem(at: dest)
+        do {
+            try await onBackground { try FFI.downloadFile(tunnel: tunnel, remote: file.path, dest: dest.path) }
+            preview = ShareItem(url: dest)
+        } catch {
+            failure = error.localizedDescription
+        }
+    }
+
     private func delete(_ file: DeviceFile) async {
         guard let tunnel = connection.tunnelPointer, !busy else { return }
         busy = true
@@ -395,4 +417,28 @@ struct ActivityView: UIViewControllerRepresentable {
         UIActivityViewController(activityItems: items, applicationActivities: nil)
     }
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
+/// Aperçu natif d'un fichier (QuickLook) — photos, PDF, texte, vidéos…
+struct QuickLookView: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeCoordinator() -> Coordinator { Coordinator(url: url) }
+
+    func makeUIViewController(context: Context) -> QLPreviewController {
+        let controller = QLPreviewController()
+        controller.dataSource = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_ controller: QLPreviewController, context: Context) {}
+
+    final class Coordinator: NSObject, QLPreviewControllerDataSource {
+        let url: URL
+        init(url: URL) { self.url = url }
+        func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+        func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
+            url as NSURL
+        }
+    }
 }
