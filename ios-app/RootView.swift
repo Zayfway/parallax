@@ -89,9 +89,10 @@ struct RootView: View {
     }
 
     private var tabs: some View {
-        // Six onglets : iPhone montre les quatre premiers puis un « More » qui
-        // regroupe Certificats et Réglages (gestion ponctuelle). Les piliers du
-        // quotidien — Installer, Bibliothèque, Carte, Jumelage — restent visibles.
+        // iPhone montre les quatre premiers onglets puis un « More » qui regroupe
+        // le reste. Les piliers du quotidien — Installer, Sources, Bibliothèque,
+        // Carte — restent visibles ; Fichiers, Atelier, Sauvegardes, Jumelage,
+        // Certificats et Réglages passent dans « More » (gestion ponctuelle).
         TabView(selection: $selectedTab) {
             SideloadScreen()
                 .tabItem { Label("Installer", systemImage: "square.and.arrow.down") }
