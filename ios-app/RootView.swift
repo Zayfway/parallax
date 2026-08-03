@@ -31,6 +31,11 @@ struct RootView: View {
     /// devient une attente.
     @State private var launching = true
 
+    /// Guide de premier lancement — les préalables (VPN, jumelage) ne sont pas
+    /// évidents. Montré une seule fois, puis mémorisé.
+    @AppStorage("px.hasOnboarded") private var hasOnboarded = false
+    @State private var showOnboarding = false
+
     /// Onglet courant, piloté aussi par les liens `parallax://` (un point
     /// partagé bascule sur la Carte).
     @State private var selectedTab = 0
@@ -49,9 +54,18 @@ struct RootView: View {
             tabs
 
             if launching {
-                LaunchView { withAnimation(PX.Motion.settle) { launching = false } }
-                    .transition(.opacity)
-                    .zIndex(1)
+                LaunchView {
+                    withAnimation(PX.Motion.settle) { launching = false }
+                    if !hasOnboarded { showOnboarding = true }
+                }
+                .transition(.opacity)
+                .zIndex(1)
+            }
+        }
+        .fullScreenCover(isPresented: $showOnboarding) {
+            OnboardingView {
+                hasOnboarded = true
+                showOnboarding = false
             }
         }
         // Liens entrants : `parallax://locate?lat=…&lon=…` (partage entre
