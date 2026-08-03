@@ -211,6 +211,15 @@ extension FFI {
         let rc = bundleID.withCString { px_app_uninstall(tunnel, $0) }
         if rc != PX_OK { throw Failure(code: rc, detail: lastError) }
     }
+
+    /// Icône PNG d'une app (via springboardservices). `nil` si indisponible —
+    /// c'est un ornement, jamais une erreur bloquante. **Bloquant** : à appeler
+    /// hors du thread principal, un appel à la fois (accès tunnel non concurrent).
+    static func appIcon(tunnel: OpaquePointer, bundleID: String) -> Data? {
+        guard let raw = bundleID.withCString({ px_app_icon(tunnel, $0) }) else { return nil }
+        defer { px_string_free(raw) }
+        return Data(base64Encoded: String(cString: raw))
+    }
 }
 
 /// Une app installée, telle que rendue par `px_apps_list`.

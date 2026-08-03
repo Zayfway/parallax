@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ONGLET BIBLIOTHÈQUE
@@ -22,6 +23,15 @@ struct LibraryScreen: View {
     @State private var busyID: String?
     @State private var shown = false
     @State private var filter: AppFilter = .all
+    /// Icônes chargées paresseusement (bundleId → image) et ce qui a déjà été
+    /// demandé, pour ne pas relancer.
+    @State private var icons: [String: UIImage] = [:]
+    @State private var iconRequested: Set<String> = []
+
+    /// File **série** : une icône à la fois. L'accès au tunnel n'est pas
+    /// concurrent (le cœur natif prête un `&mut` unique de l'adaptateur), donc
+    /// on ne lance jamais deux requêtes en parallèle.
+    private static let iconQueue = DispatchQueue(label: "io.parallax.icons")
 
     /// Filtre par provenance : tout, sideloadées (cert/IPA), ou App Store.
     enum AppFilter: String, CaseIterable {
@@ -143,7 +153,7 @@ struct LibraryScreen: View {
 
     private func appRow(_ app: InstalledApp) -> some View {
         HStack(spacing: PX.Space.snug) {
-            IconTile(system: "app.fill", size: 40)
+            appIcon(app)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(app.name)
@@ -188,6 +198,45 @@ struct LibraryScreen: View {
             .padding(.leading, PX.Space.hair)
         }
         .padding(PX.Space.base)
+    }
+
+    /// Vraie icône de l'app si chargée, tuile générique en attendant.
+    private func appIcon(_ app: InstalledApp) -> some View {
+        RoundedRectangle(cornerRadius: 40 * 0.28, style: .continuous)
+            .fill(PX.Color.azimuth.opacity(icons[app.bundleId] == nil ? 0.16 : 0))
+            .frame(width: 40, height: 40)
+            .overlay {
+                if let img = icons[app.bundleId] {
+                    Image(uiImage: img)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    Image(systemName: "app.fill")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(PX.Color.azimuth)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 40 * 0.28, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 40 * 0.28, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+            )
+            .onAppear { loadIcon(app) }
+    }
+
+    private func loadIcon(_ app: InstalledApp) {
+        guard icons[app.bundleId] == nil,
+              !iconRequested.contains(app.bundleId),
+              let tunnel = connection.tunnelPointer else { return }
+        iconRequested.insert(app.bundleId)
+        let bundleId = app.bundleId
+        Self.iconQueue.async {
+            let image = FFI.appIcon(tunnel: tunnel, bundleID: bundleId).flatMap(UIImage.init)
+            guard let image else { return }
+            DispatchQueue.main.async {
+                withAnimation(PX.Motion.settle) { icons[bundleId] = image }
+            }
+        }
     }
 
     private func banner(icon: String, tint: Color, title: String, detail: String) -> some View {

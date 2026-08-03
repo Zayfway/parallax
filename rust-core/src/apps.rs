@@ -69,15 +69,74 @@ pub unsafe extern "C" fn px_app_uninstall(
     })
 }
 
+/// Rend l'icône d'une app en **PNG encodé base64** (via springboardservices),
+/// ou NULL. Chargé paresseusement, une icône à la fois. À libérer par
+/// `px_string_free`.
+///
+/// # Safety
+/// `tunnel` valide ; `bundle_id` UTF-8 terminé par NUL.
+#[no_mangle]
+pub unsafe extern "C" fn px_app_icon(
+    tunnel: *mut PxTunnel,
+    bundle_id: *const c_char,
+) -> *mut c_char {
+    clear_last_error();
+    if tunnel.is_null() {
+        set_last_error("px_app_icon : tunnel nul");
+        return ptr::null_mut();
+    }
+    let Some(bid) = cstr(bundle_id) else {
+        set_last_error("px_app_icon : identifiant nul");
+        return ptr::null_mut();
+    };
+    guard("px_app_icon", ptr::null_mut(), || match imp::icon(tunnel, &bid) {
+        Ok(b64) => CString::new(b64)
+            .map(|c| c.into_raw())
+            .unwrap_or(ptr::null_mut()),
+        Err(e) => {
+            set_last_error(e);
+            ptr::null_mut()
+        }
+    })
+}
+
 mod imp {
     use super::*;
+    use base64::Engine;
     use idevice::provider::RsdProvider;
     use idevice::services::installation_proxy::InstallationProxyClient;
+    use idevice::services::springboardservices::SpringBoardServicesClient;
     use idevice::RsdService;
 
     /// Nom du service RSD d'installation_proxy.
     fn service_name() -> String {
         <InstallationProxyClient as RsdService>::rsd_service_name().to_string()
+    }
+
+    pub unsafe fn icon(tunnel: *mut PxTunnel, bundle_id: &str) -> Result<String, String> {
+        let tun = crate::tunnel::tunnel_inner(tunnel);
+        let png = tun.runtime.block_on(async {
+            let name = <SpringBoardServicesClient as RsdService>::rsd_service_name().to_string();
+            let port = tun
+                .rsd
+                .services
+                .get(&name)
+                .map(|s| s.port)
+                .ok_or_else(|| format!("service {name} absent de RSD"))?;
+            let stream = tun
+                .adapter
+                .connect_to_service_port(port)
+                .await
+                .map_err(|e| format!("connexion à springboardservices : {e}"))?;
+            let mut client = SpringBoardServicesClient::from_stream(stream)
+                .await
+                .map_err(|e| format!("canal springboardservices : {e}"))?;
+            client
+                .get_icon_pngdata(bundle_id.to_string())
+                .await
+                .map_err(|e| format!("icône de {bundle_id} : {e}"))
+        })?;
+        Ok(base64::engine::general_purpose::STANDARD.encode(png))
     }
 
     pub unsafe fn list(tunnel: *mut PxTunnel) -> Result<String, String> {

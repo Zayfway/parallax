@@ -2910,6 +2910,7 @@ dependencies = [
 name = "parallax-ffi"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "cbindgen",
  "flate2",
  "idevice 0.1.63",
