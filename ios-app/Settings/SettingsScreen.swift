@@ -28,6 +28,8 @@ struct SettingsScreen: View {
     @State private var servicesExpanded = false
     /// Diagnostic appareil (batterie, modèle, iOS) via le tunnel.
     @State private var deviceInfo: DeviceInfo?
+    /// Journal exporté en fichier, pour la feuille de partage.
+    @State private var logShare: ShareItem?
 
     // MARK: - Phase
 
@@ -122,6 +124,14 @@ struct SettingsScreen: View {
         .animation(PX.Motion.acquire, value: connection.services.count)
         .task { interfaces = DeviceConnection.activeInterfaces() }
         .task(id: connection.services.count) { await loadDevice() }
+        .sheet(item: $logShare) { item in ActivityView(items: [item.url]) }
+    }
+
+    /// Écrit le journal dans un fichier et ouvre la feuille de partage.
+    private func shareLog() {
+        let url = URL.temporaryDirectory.appending(path: "parallax-journal.txt")
+        try? log.joined.data(using: .utf8)?.write(to: url)
+        logShare = ShareItem(url: url)
     }
 
     /// Charge le diagnostic si le lien est déjà établi (sans le forcer ici).
@@ -385,10 +395,12 @@ struct SettingsScreen: View {
 
     private var consoleCard: some View {
         VStack(alignment: .leading, spacing: PX.Space.tight) {
-            HStack {
+            HStack(spacing: PX.Space.snug) {
                 SectionLabel("Journal (\(log.lines.count))")
                 Spacer()
                 Button("Copier") { UIPasteboard.general.string = log.joined }
+                    .font(PX.Font.display(12, .medium))
+                Button("Partager") { shareLog() }
                     .font(PX.Font.display(12, .medium))
                 Button("Vider") { log.clear() }
                     .font(PX.Font.display(12, .medium))

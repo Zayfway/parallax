@@ -536,6 +536,15 @@ struct MapScreen: View {
                     Label("Flânerie", systemImage: "figure.walk.motion")
                 }
 
+                if engine.strollMode {
+                    Picker("Rayon de flânerie", selection: $engine.strollRadius) {
+                        Text("50 m").tag(50.0)
+                        Text("70 m").tag(70.0)
+                        Text("120 m").tag(120.0)
+                        Text("200 m").tag(200.0)
+                    }
+                }
+
                 // Partager la position simulée courante (QR + lien parallax://).
                 if let fix = engine.currentFix {
                     Button {

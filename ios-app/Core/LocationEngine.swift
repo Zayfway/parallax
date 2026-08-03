@@ -80,8 +80,8 @@ final class LocationEngine: ObservableObject {
     /// Ancre de la flânerie (le point posé) et destination courante.
     private var strollAnchor: CLLocationCoordinate2D?
     private var strollWaypoint: CLLocationCoordinate2D?
-    /// Rayon de flânerie, en mètres.
-    private let strollRadius: Double = 70
+    /// Rayon de flânerie, en mètres. Réglable depuis la carte.
+    @Published var strollRadius: Double = 70
 
     /// Point reçu via un lien `parallax://locate` (partage entre appareils ou
     /// site web), en attente d'être visé par la carte. Consommé puis remis à nil.

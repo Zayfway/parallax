@@ -31,6 +31,32 @@ builds produits publiquement par **GitHub Actions**.
 - **Installation** : télécharge, **signe avec ton propre certificat**, transfère
   et installe **SideStore** ou **LiveContainer**. Tu vois passer chaque étape,
   avec un journal en direct.
+- **N'importe quel IPA** (« Autre IPA ») : importe un `.ipa` ou colle une URL, et
+  installe-le signé avec ton compte.
+- **Injection de tweaks** (comme Feather) : `.dylib` autonome, ou `.deb` complet
+  — la **Substrate** est réécrite vers **ElleKit** et les dépendances embarquées
+  (3 paliers). Options **Injection Path / Folder / Inject into Extensions**.
+- **Signer sans compte Apple** : importe un certificat **`.p12` + profil
+  `.mobileprovision`** ; la signature se fait **hors-ligne**, sur l'appareil.
+- **Propriétés d'app** : renommer, changer l'identifiant pour **dupliquer** une
+  app (deux copies côte à côte).
+
+### 📚 Bibliothèque — gérer les apps installées
+- **Liste** de toutes les apps (icônes réelles, taille de stockage, version).
+- **Filtre** : sideloadées (cert/IPA) · App Store · toutes. **Recherche** et
+  **tri** (nom / taille).
+- **Désinstalle** n'importe quelle app, **fiche détaillée** par app.
+
+### 📁 Fichiers — l'espace Média de l'appareil
+- **Parcourir** `/var/mobile/Media` (photos, téléchargements, fichiers) par AFC.
+- **Télécharger & partager**, **importer**, **supprimer**, **créer un dossier**,
+  jauge de **stockage**.
+
+### 🔐 Profils & 🩺 diagnostic
+- **Profils de provisionnement** : liste (nom, app id, validité) et **retrait**
+  d'un profil expiré ou en trop qui bloquerait une installation.
+- **Diagnostic appareil** : nom, modèle, version iOS, **batterie** — lus par le
+  tunnel, sans image développeur.
 
 ### 📍 Position simulée
 - **Point posé** sur la carte, ou **recherche d'adresse** (barre de recherche →
@@ -39,6 +65,11 @@ builds produits publiquement par **GitHub Actions**.
   (orthodromie), avec **choix de la vitesse**.
 - **Boucle**, **pause / reprise**, barre d'avancement.
 - **Import GPX**, **joystick** de déplacement au pouce, **lieux enregistrés**.
+- **Partage d'un point** : QR code + lien `parallax://locate` — un ami scanne et
+  se retrouve au même endroit.
+- **Mode furtif** (bruit GPS réaliste) et **flânerie** (le point se promène tout
+  seul à allure piéton) : une position simulée qui *respire* au lieu d'être
+  gelée — ce que traquent Snap Map, Life360 & co.
 - **Point de position réelle** affiché sur la carte, session supervisée qui se
   rétablit après une micro-coupure du tunnel.
 
