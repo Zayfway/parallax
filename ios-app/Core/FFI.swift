@@ -193,6 +193,34 @@ extension FFI {
         defer { px_string_free(raw) }
         return String(cString: raw)
     }
+
+    // MARK: - Bibliothèque (apps installées)
+
+    /// Liste les apps utilisateur installées sur l'appareil (via le tunnel).
+    static func listApps(tunnel: OpaquePointer) throws -> [InstalledApp] {
+        guard let raw = px_apps_list(tunnel) else {
+            throw Failure(code: PX_ERR_INTERNAL, detail: lastError)
+        }
+        defer { px_string_free(raw) }
+        let json = Data(String(cString: raw).utf8)
+        return (try? JSONDecoder().decode([InstalledApp].self, from: json)) ?? []
+    }
+
+    /// Désinstalle l'app d'identifiant `bundleID`.
+    static func uninstallApp(tunnel: OpaquePointer, bundleID: String) throws {
+        let rc = bundleID.withCString { px_app_uninstall(tunnel, $0) }
+        if rc != PX_OK { throw Failure(code: rc, detail: lastError) }
+    }
+}
+
+/// Une app installée, telle que rendue par `px_apps_list`.
+struct InstalledApp: Codable, Identifiable, Equatable {
+    let bundleId: String
+    let name: String
+    let version: String
+    let build: String
+    let type: String
+    var id: String { bundleId }
 }
 
 /// Emprunte quatre chaînes en C-strings à la fois, pour éviter une pyramide de

@@ -22,6 +22,7 @@ use std::ptr;
 use std::sync::Mutex;
 
 pub mod account;
+pub mod apps;
 pub mod inject;
 pub mod install;
 pub mod location;
