@@ -226,6 +226,37 @@ pub extern "C" fn prism_eng_write(ty: u8, addr: u64, value: *const c_char) -> c_
     }
 }
 
+/// Mode auto : écrit `value` sur TOUS les candidats. Renvoie le nombre écrit.
+#[no_mangle]
+pub extern "C" fn prism_eng_write_all(ty: u8, value: *const c_char) -> c_int {
+    let t = Ty::from_u8(ty);
+    let Some(bytes) = t.parse(&cstr_in(value)) else { return -1; };
+    let cands: Vec<u64> = { lock(&STATE).cands.iter().take(200_000).copied().collect() };
+    let mut n = 0;
+    for addr in cands {
+        if vm::write_mem(addr, &bytes) {
+            n += 1;
+        }
+    }
+    n as c_int
+}
+
+/// Mode auto : fige TOUS les candidats à `value`. Renvoie le nombre figé.
+#[no_mangle]
+pub extern "C" fn prism_eng_freeze_all(ty: u8, value: *const c_char) -> c_int {
+    let t = Ty::from_u8(ty);
+    let Some(bytes) = t.parse(&cstr_in(value)) else { return -1; };
+    let cands: Vec<u64> = { lock(&STATE).cands.iter().take(50_000).copied().collect() };
+    let mut f = lock(&FREEZE);
+    let mut n = 0;
+    for addr in cands {
+        f.retain(|(a, _, _)| *a != addr);
+        f.push((addr, ty, bytes.clone()));
+        n += 1;
+    }
+    n as c_int
+}
+
 // ── Gel ─────────────────────────────────────────────────────────────────────
 
 #[no_mangle]

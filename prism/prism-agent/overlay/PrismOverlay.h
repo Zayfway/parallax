@@ -13,6 +13,8 @@ char *prism_eng_scan(unsigned char ty, const char *value);            // JSON {c
 char *prism_eng_refine(unsigned char ty, unsigned char op, const char *value); // op 0 EQ,1 UP,2 DOWN,3 SAME
 char *prism_eng_read(unsigned char ty, unsigned long long addr);      // valeur formatée (ou "")
 int   prism_eng_write(unsigned char ty, unsigned long long addr, const char *value);
+int   prism_eng_write_all(unsigned char ty, const char *value);   // mode auto
+int   prism_eng_freeze_all(unsigned char ty, const char *value);  // mode auto
 void  prism_eng_free(char *p);
 void  prism_eng_freeze_add(unsigned char ty, unsigned long long addr, const char *value);
 void  prism_eng_freeze_remove(unsigned long long addr);

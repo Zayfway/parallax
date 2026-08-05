@@ -8,6 +8,11 @@
 #import <math.h>
 #import "PrismOverlay.h"
 
+// État global lu par le hit-testing passthrough (évite les soucis d'ordre de
+// déclaration). Panneau fermé -> seule la barre-pilule capte les touches.
+static BOOL gPrismOpen = NO;
+static __weak UIView *gPrismBar = nil;
+
 // ── Couleurs (système Apple + accents) ──────────────────────────────────────
 #define ACCENT   (UIColor.systemBlueColor)
 #define FREEZEC  (UIColor.systemOrangeColor)
@@ -75,8 +80,14 @@ static NSArray *PXArr(char *c) {
 @end
 @implementation PrismRootView
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    UIView *v = [super hitTest:point withEvent:event];
-    return (v == self) ? nil : v;
+    UIView *hit = [super hitTest:point withEvent:event];
+    if (!hit || hit == self) return nil;          // zone vide -> passe à l'app
+    if (gPrismOpen) return hit;                    // panneau ouvert -> modal, on capte
+    // Panneau fermé : ne capter QUE la barre-pilule ; tout le reste passe à l'app.
+    for (UIView *v = hit; v; v = v.superview) {
+        if (v == gPrismBar) return hit;
+    }
+    return nil;
 }
 @end
 @interface PrismHostVC : UIViewController
@@ -194,6 +205,7 @@ static NSArray *PXArr(char *c) {
     bar.alpha = 0; bar.transform = CGAffineTransformMakeScale(0.6, 0.6);
     [self.window.rootViewController.view addSubview:bar];
     self.bar = bar;
+    gPrismBar = bar;
 }
 - (void)onPan:(UIPanGestureRecognizer *)p {
     UIView *v = self.bar;
@@ -278,7 +290,7 @@ static NSArray *PXArr(char *c) {
 - (void)openSheet {
     self.segment.selectedSegmentIndex = self.tab;
     [self selectTab];
-    self.open = YES;
+    self.open = YES; gPrismOpen = YES;
     [self.window.rootViewController.view bringSubviewToFront:self.backdrop];
     [self.window.rootViewController.view bringSubviewToFront:self.sheet];
     self.backdrop.hidden = NO;
@@ -290,7 +302,7 @@ static NSArray *PXArr(char *c) {
     self.timer = [NSTimer scheduledTimerWithTimeInterval:0.4 target:self selector:@selector(tick) userInfo:nil repeats:YES];
 }
 - (void)closeSheet {
-    self.open = NO; [self.window endEditing:YES];
+    self.open = NO; gPrismOpen = NO; [self.window endEditing:YES];
     [self.timer invalidate]; self.timer = nil;
     CGRect b = self.window.bounds;
     [UIView animateWithDuration:0.4 delay:0 usingSpringWithDamping:0.9 initialSpringVelocity:0.3 options:0 animations:^{
@@ -396,6 +408,11 @@ static NSArray *PXArr(char *c) {
     r3.axis = UILayoutConstraintAxisHorizontal; r3.spacing = 8; [self.content addArrangedSubview:r3];
     UIStackView *r4 = [[UIStackView alloc] initWithArrangedSubviews:@[[self tinted:@"Figer" action:@selector(onFreezeSelected)], [self tinted:@"Épingler" action:@selector(onPin)]]];
     r4.axis = UILayoutConstraintAxisHorizontal; r4.spacing = 8; r4.distribution = UIStackViewDistributionFillEqually; [self.content addArrangedSubview:r4];
+
+    // Mode auto : applique la valeur à TOUS les candidats d'un coup.
+    [self.content addArrangedSubview:[self section:@"Auto (tous les candidats)"]];
+    UIStackView *r5 = [[UIStackView alloc] initWithArrangedSubviews:@[[self filled:@"Éditer tout" color:FREEZEC action:@selector(onWriteAll)], [self tinted:@"Figer tout" action:@selector(onFreezeAll)]]];
+    r5.axis = UILayoutConstraintAxisHorizontal; r5.spacing = 8; r5.distribution = UIStackViewDistributionFillEqually; [self.content addArrangedSubview:r5];
 }
 
 - (NSString *)targetText {
@@ -463,6 +480,18 @@ static NSArray *PXArr(char *c) {
     for (NSDictionary *d in self.saved) if ([d[@"addr"] unsignedLongLongValue] == self.selectedAddr) return;
     [self.saved addObject:@{@"ty": @(self.currentType), @"addr": @(self.selectedAddr)}];
     self.targetLabel.textColor = OKC; self.targetLabel.text = [NSString stringWithFormat:@"épinglé : 0x%010llX", self.selectedAddr];
+}
+- (void)onWriteAll {
+    int n = prism_eng_write_all([self ty], self.writeField.text.UTF8String ?: "");
+    self.statusLabel.textColor = n >= 0 ? OKC : BADC;
+    self.statusLabel.text = n >= 0 ? [NSString stringWithFormat:@"écrit sur %d adresses", n] : @"valeur invalide";
+    [self pulseBar]; [self renderCandidates];
+}
+- (void)onFreezeAll {
+    int n = prism_eng_freeze_all([self ty], self.writeField.text.UTF8String ?: "");
+    self.statusLabel.textColor = n >= 0 ? FREEZEC : BADC;
+    self.statusLabel.text = n >= 0 ? [NSString stringWithFormat:@"%d adresses figées", n] : @"valeur invalide";
+    [self pulseBar];
 }
 
 // ── Onglet Enregistrés ──────────────────────────────────────────────────────
