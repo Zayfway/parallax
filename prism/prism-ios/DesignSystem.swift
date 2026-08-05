@@ -94,12 +94,14 @@ struct GlassCard: ViewModifier {
             .overlay(
                 LinearGradient(colors: [.white.opacity(0.08), .clear],
                                startPoint: .top, endPoint: .bottom)
-                    .clipShape(shape))
+                    .clipShape(shape)
+                    .allowsHitTesting(false))   // décoratif : ne doit JAMAIS intercepter les taps
             .overlay(
                 shape.strokeBorder(
                     LinearGradient(colors: [.white.opacity(0.24), .white.opacity(0.06), .white.opacity(0.02)],
                                    startPoint: .top, endPoint: .bottom),
-                    lineWidth: 1))
+                    lineWidth: 1)
+                    .allowsHitTesting(false))   // idem : le liseré ne capte pas le toucher
             .shadow(color: .black.opacity(0.44), radius: 24, y: 12)
     }
 }
