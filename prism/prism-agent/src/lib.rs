@@ -1,19 +1,32 @@
-//! Agent Prism — dylib injecté dans l'app cible (palier 1 autonome).
+//! Agent Prism — dylib injecté dans l'app cible.
 //!
-//! Au chargement du dylib (constructeurs exécutés avant `main` — injection via
-//! `LC_LOAD_DYLIB`), un thread lève le serveur loopback `127.0.0.1:PR_AGENT_PORT`.
-//! Il ne bloque **jamais** le démarrage de la cible. L'agent scanne
-//! `mach_task_self()` — sa propre tâche, aucun entitlement privilégié.
+//! Deux faces sur le même moteur mach (vm.rs) :
+//!   1. **Overlay in-app** (façon GameGuardian) rendu par `overlay/PrismOverlay.m`,
+//!      installé au chargement. Il pilote le moteur via des exports C (engine.rs).
+//!   2. **Serveur loopback** `127.0.0.1:PR_AGENT_PORT` pour l'app compagnon Prism
+//!      (protocole ligne-JSON, prism-proto).
+//!
+//! Constructeurs exécutés avant `main` — on ne bloque jamais le démarrage.
 
+mod engine;
 mod vm;
 
 use prism_proto::{Cmd, Reply, PR_AGENT_PORT};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 
+extern "C" {
+    // Défini dans PrismOverlay.m — installe l'overlay quand une scène est prête.
+    fn prism_overlay_bootstrap();
+}
+
 #[ctor::ctor]
 fn prism_agent_boot() {
-    // Ne jamais bloquer le chargement : tout part sur un thread détaché.
+    // Overlay in-app (l'ObjC diffère l'installation sur le thread principal).
+    unsafe { prism_overlay_bootstrap() };
+    // Boucle de gel pour l'overlay.
+    engine::start_freeze_thread();
+    // Serveur loopback pour l'app compagnon (conservé, thread détaché).
     std::thread::spawn(|| {
         let _ = serve();
     });
@@ -24,7 +37,6 @@ fn serve() -> std::io::Result<()> {
     for conn in listener.incoming() {
         match conn {
             Ok(stream) => {
-                // Une connexion = une session = un ScanState indépendant.
                 std::thread::spawn(move || {
                     let _ = handle(stream);
                 });
@@ -44,7 +56,7 @@ fn handle(stream: TcpStream) -> std::io::Result<()> {
     loop {
         line.clear();
         if reader.read_line(&mut line)? == 0 {
-            break; // canal fermé par l'hôte
+            break;
         }
         let reply = match serde_json::from_str::<Cmd>(line.trim_end()) {
             Ok(cmd) => dispatch(&mut st, cmd),
@@ -63,36 +75,24 @@ fn handle(stream: TcpStream) -> std::io::Result<()> {
 
 fn dispatch(st: &mut vm::ScanState, cmd: Cmd) -> Reply {
     match cmd {
-        Cmd::Regions => Reply::Regions {
-            regions: vm::regions(),
-        },
+        Cmd::Regions => Reply::Regions { regions: vm::regions() },
         Cmd::ScanI32 { value } => {
             vm::scan_i32(st, value);
-            Reply::Scan {
-                count: st.cands.len(),
-                sample: sample(st),
-            }
+            Reply::Scan { count: st.cands.len(), sample: sample(st) }
         }
         Cmd::Refine { op, value } => {
             vm::refine(st, op, value);
-            Reply::Scan {
-                count: st.cands.len(),
-                sample: sample(st),
-            }
+            Reply::Scan { count: st.cands.len(), sample: sample(st) }
         }
         Cmd::ReadI32 { addr } => match vm::read_i32(addr) {
             Some(value) => Reply::Value { addr, value },
-            None => Reply::Err {
-                message: "lecture refusée".into(),
-            },
+            None => Reply::Err { message: "lecture refusée".into() },
         },
         Cmd::WriteI32 { addr, value } => {
             if vm::write_i32(addr, value) {
                 Reply::Ok
             } else {
-                Reply::Err {
-                    message: "écriture refusée".into(),
-                }
+                Reply::Err { message: "écriture refusée".into() }
             }
         }
     }

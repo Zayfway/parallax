@@ -24,7 +24,9 @@ prism/
   prism-core/    côté HÔTE — surface FFI pr_*, exposée en PrismFFI.xcframework.
                  build.rs génère include/prism.h via cbindgen.
   prism-agent/   côté CIBLE — dylib cdylib injecté (mach_task_self, scan/écriture).
-  prism-ios/     SwiftUI. Rien n'appelle pr_* hors de Core/FFI.swift.
+                 vm.rs (mach) + engine.rs (exports C) + overlay/PrismOverlay.m
+                 (UIKit ObjC compilé par build.rs/cc : overlay in-app).
+  prism-ios/     SwiftUI (app compagnon). Rien n'appelle pr_* hors de Core/FFI.swift.
   build-prism.sh assemble PrismFFI.xcframework (host).
   build-agent.sh compile le dylib agent, pose l'install_name.
 ```
@@ -123,6 +125,25 @@ Connexions loopback = exemptes du prompt réseau local (127.0.0.1).
 
 Injection au jalon 1 : passer `libprism_agent.dylib` comme dylib à l'installeur
 Parallax (palier 1 autonome). Aucun code d'injection à écrire côté Prism.
+
+---
+
+## Overlay in-app (mode principal, façon GameGuardian)
+
+Le vrai mode d'usage : l'agent **dessine sa propre UI** dans l'app cible
+(`overlay/PrismOverlay.m`, UIKit ObjC compilé dans le dylib par `build.rs`/`cc`).
+Bouton flottant draggable → panneau moteur mémoire (recherche, affinage ▲▼≈=,
+sélection d'adresse, écriture, **gel/freeze**, régions). L'ObjC appelle le moteur
+Rust par des fonctions C (`prism_eng_*` dans `engine.rs`) — pas de socket, tout
+en process. **Ça règle la suspension** : plus besoin des deux apps au premier plan.
+
+- L'overlay s'installe quand une `UIWindowScene` active est prête (retry depuis
+  le ctor), dans une `UIWindow` à `windowLevel` élevé + hit-testing passthrough
+  (les zones vides laissent passer les touches vers l'app hôte).
+- Splash « agent injecté » à l'ouverture. L'ambre = un gel actif (le halo du
+  bouton flottant passe à l'ambre) — cohérent avec la règle 1.
+- Le serveur loopback + l'app compagnon restent, mais l'overlay est le mode phare.
+- L'ObjC ne peut pas être compilé hors macOS : valider en CI, corriger au build.
 
 ---
 
