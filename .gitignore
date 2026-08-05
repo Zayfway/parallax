@@ -18,3 +18,9 @@ rust-core/include/parallax.h
 rp_pairing_file.plist
 *.p12
 *.mobileprovision
+
+# Prism (projet distinct sous prism/) — artefacts générés (ajout additif)
+prism/PrismFFI.xcframework/
+prism/**/target/
+prism/prism-core/include/prism.h
+prism/prism-ios/Info.plist

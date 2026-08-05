@@ -1,0 +1,12 @@
+[package]
+name    = "prism-proto"
+version = "0.1.0"
+edition = "2021"
+
+# Contrat de fil host <-> agent. Crate pur Rust, aucune dépendance système,
+# partagé par prism-core (hôte) et prism-agent (cible) via dépendance `path`.
+# Pas de workspace racine (cf. CLAUDE.md, règle d'isolation).
+
+[dependencies]
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -1,0 +1,11 @@
+# Artefacts Prism générés (ne jamais versionner). Le .gitignore racine reçoit
+# les mêmes chemins préfixés `prism/` pour un `git add` depuis la racine.
+PrismFFI.xcframework/
+prism-core/target/
+prism-agent/target/
+prism-proto/target/
+prism-core/include/prism.h
+prism-ios/Info.plist       # généré par xcodegen depuis prism.yml
+Prism.xcodeproj/
+build/
+.DS_Store

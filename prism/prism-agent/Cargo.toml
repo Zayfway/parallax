@@ -1,0 +1,22 @@
+[package]
+name    = "prism-agent"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name       = "prism_agent"
+# DOIT être dynamique : c'est ce qu'on injecte (palier 1 autonome). Le cdylib
+# linke ici là où le FFI hôte ne pouvait pas, parce que les dépendances sont
+# volontairement minces : mach2 (bindings extern vers libSystem, aucun C à
+# compiler), ctor (sections linker, pur Rust), serde_json.
+crate-type = ["cdylib"]
+
+[dependencies]
+prism-proto = { path = "../prism-proto" }
+serde_json  = "1"
+mach2       = "0.4"
+ctor        = "0.2"
+
+[profile.release]
+opt-level = "z"
+lto       = true

@@ -1,0 +1,106 @@
+# CI Prism — fichier NEUF, entièrement cloisonné de build-ipa.yml (Parallax).
+# Déclencheurs : PR touchant prism/ (validation), tag prism-v* (release),
+# dispatch manuel. PAS de push sur main (zéro rebuild croisé, zéro interférence
+# avec la release Parallax). Tag prism-v* (jamais v*), make_latest:false, cache
+# namespacé cargo-prism-*. Pas d'étape « symboles dupliqués » : prism-core ne
+# tire pas la double dépendance idevice/isideload.
+name: Build Prism IPA
+
+on:
+  push:
+    tags: ['prism-v*']
+  pull_request:
+    paths:
+      - 'prism/**'
+      - '.github/workflows/build-prism-ipa.yml'
+  workflow_dispatch:
+    inputs:
+      features:
+        description: "Profil prism-core"
+        type: choice
+        options: ["agent-link", "", "full"]
+        default: "agent-link"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sélectionner Xcode
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          xcodebuild -version
+
+      - name: Rust + cibles iOS
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+
+      - name: Cache cargo (namespace prism)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            prism/prism-core/target
+            prism/prism-agent/target
+          key: cargo-prism-${{ runner.os }}-${{ hashFiles('prism/prism-core/Cargo.toml', 'prism/prism-agent/Cargo.toml') }}
+          restore-keys: cargo-prism-${{ runner.os }}-
+
+      - name: Construire PrismFFI.xcframework
+        run: cd prism && ./build-prism.sh "${{ github.event.inputs.features || 'agent-link' }}"
+
+      - name: Construire l'agent injectable
+        run: cd prism && ./build-agent.sh
+
+      - name: Générer le projet
+        run: |
+          brew install xcodegen
+          cd prism && xcodegen generate --spec prism.yml
+
+      - name: Archiver
+        run: |
+          xcodebuild archive \
+            -project prism/Prism.xcodeproj \
+            -scheme Prism \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$PWD/build/Prism.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" | tee build.log
+          test -d build/Prism.xcarchive
+
+      - name: Empaqueter l'IPA
+        run: |
+          mkdir -p build/Payload
+          cp -R build/Prism.xcarchive/Products/Applications/Prism.app build/Payload/
+          (cd build && zip -qry Prism.ipa Payload)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Prism-ipa
+          path: build/Prism.ipa
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Prism-agent-dylib
+          path: prism/prism-agent/target/aarch64-apple-ios/release/libprism_agent.dylib
+
+      - id: ver
+        run: echo "tag=prism-v$(grep MARKETING_VERSION prism/prism.yml | head -1 | sed 's/.*\"\(.*\)\".*/\1/')" >> "$GITHUB_OUTPUT"
+
+      - name: Publier la release
+        if: startsWith(github.ref, 'refs/tags/prism-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          make_latest: false            # Parallax garde `latest`
+          files: |
+            build/Prism.ipa
+            prism/prism-agent/target/aarch64-apple-ios/release/libprism_agent.dylib
