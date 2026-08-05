@@ -8,6 +8,7 @@ name: Build Prism IPA
 
 on:
   push:
+    branches: [claude/nouveau-projet-parallax-0lud8h]  # validation jalon 1 (retirer au merge)
     tags: ['prism-v*']
   pull_request:
     paths:
