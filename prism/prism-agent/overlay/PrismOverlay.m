@@ -109,7 +109,12 @@ static NSArray *PXArr(char *c) {
 @property (nonatomic, strong) UIVisualEffectView *bar;
 @property (nonatomic, strong) UIView *backdrop;
 @property (nonatomic, strong) UIVisualEffectView *sheet;
-@property (nonatomic, strong) UISegmentedControl *segment;
+@property (nonatomic, strong) UILabel *sheetTitle;
+@property (nonatomic, strong) UIButton *backButton;
+@property (nonatomic, strong) UITextField *memAddrField;
+@property (nonatomic, strong) UITextField *hexWriteField;
+@property (nonatomic, strong) UILabel *hexLabel;
+@property (nonatomic, assign) unsigned long long memAddr;
 @property (nonatomic, strong) UIStackView *content;
 @property (nonatomic, strong) UIButton *typeButton;
 @property (nonatomic, strong) UITextField *searchField;
@@ -198,7 +203,7 @@ static NSArray *PXArr(char *c) {
         brand,
         [self barIcon:@"magnifyingglass" action:@selector(openScan)],
         [self barIcon:@"bookmark.fill" action:@selector(openSaved)],
-        [self barIcon:@"square.grid.2x2.fill" action:@selector(openRegions)],
+        [self barIcon:@"memorychip" action:@selector(openMemory)],
     ]];
     row.frame = bar.contentView.bounds;
     row.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -266,15 +271,26 @@ static NSArray *PXArr(char *c) {
     UIView *grab = [[UIView alloc] initWithFrame:CGRectMake((b.size.width - 36) / 2, 8, 36, 5)];
     grab.backgroundColor = [UIColor colorWithWhite:1 alpha:0.28]; grab.layer.cornerRadius = 2.5; [cv addSubview:grab];
 
-    self.segment = [[UISegmentedControl alloc] initWithItems:@[@"Scan", @"Enregistrés", @"Régions"]];
-    self.segment.frame = CGRectMake(16, 22, b.size.width - 32, 32);
-    self.segment.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    self.segment.selectedSegmentIndex = 0;
-    self.segment.selectedSegmentTintColor = ACCENT;
-    [self.segment addTarget:self action:@selector(onSegment) forControlEvents:UIControlEventValueChanged];
-    [cv addSubview:self.segment];
+    UIImageSymbolConfiguration *hc = [UIImageSymbolConfiguration configurationWithPointSize:17 weight:UIImageSymbolWeightSemibold];
+    self.backButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [self.backButton setImage:[UIImage systemImageNamed:@"chevron.left" withConfiguration:hc] forState:UIControlStateNormal];
+    self.backButton.tintColor = ACCENT; self.backButton.frame = CGRectMake(10, 20, 40, 34);
+    [self.backButton addTarget:self action:@selector(onBack) forControlEvents:UIControlEventTouchUpInside];
+    [cv addSubview:self.backButton];
 
-    UIScrollView *sc = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 66, b.size.width, self.sheetH - 66)];
+    self.sheetTitle = [[UILabel alloc] initWithFrame:CGRectMake(54, 20, b.size.width - 108, 34)];
+    self.sheetTitle.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    self.sheetTitle.font = PXText(20, UIFontWeightBold); self.sheetTitle.textColor = UIColor.labelColor; self.sheetTitle.text = @"Prism";
+    [cv addSubview:self.sheetTitle];
+
+    UIButton *closeb = [UIButton buttonWithType:UIButtonTypeSystem];
+    [closeb setImage:[UIImage systemImageNamed:@"xmark.circle.fill" withConfiguration:hc] forState:UIControlStateNormal];
+    closeb.tintColor = UIColor.tertiaryLabelColor; closeb.frame = CGRectMake(b.size.width - 46, 20, 34, 34);
+    closeb.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    [closeb addTarget:self action:@selector(closeSheet) forControlEvents:UIControlEventTouchUpInside];
+    [cv addSubview:closeb];
+
+    UIScrollView *sc = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 62, b.size.width, self.sheetH - 62)];
     sc.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     sc.keyboardDismissMode = UIScrollViewKeyboardDismissModeInteractive; sc.showsVerticalScrollIndicator = NO;
     [cv addSubview:sc];
@@ -288,14 +304,14 @@ static NSArray *PXArr(char *c) {
     ]];
 }
 
-- (void)openScan { self.tab = 0; [self openSheet]; }
-- (void)openSaved { self.tab = 1; [self openSheet]; }
-- (void)openRegions { self.tab = 2; [self openSheet]; }
+- (void)openScan { self.tab = 1; [self openSheet]; }
+- (void)openSaved { self.tab = 2; [self openSheet]; }
+- (void)openMemory { self.tab = 3; [self openSheet]; }
+- (void)openRegions { self.tab = 4; [self openSheet]; }
 - (void)toggleSheet { if (self.open) [self closeSheet]; else { self.tab = 0; [self openSheet]; } }
-- (void)onSegment { self.tab = self.segment.selectedSegmentIndex; [self selectTab]; }
+- (void)onBack { self.tab = 0; [self selectTab]; }
 
 - (void)openSheet {
-    self.segment.selectedSegmentIndex = self.tab;
     [self selectTab];
     self.open = YES; gPrismOpen = YES;
     [self.window.rootViewController.view bringSubviewToFront:self.backdrop];
@@ -322,9 +338,100 @@ static NSArray *PXArr(char *c) {
 // ── Construction des onglets ────────────────────────────────────────────────
 - (void)selectTab {
     for (UIView *v in self.content.arrangedSubviews) [v removeFromSuperview];
-    if (self.tab == 0) [self buildScan];
-    else if (self.tab == 1) [self buildSaved];
-    else [self buildRegions];
+    self.backButton.hidden = (self.tab == 0);
+    NSArray *titles = @[@"Prism", @"Recherche", @"Enregistrés", @"Mémoire", @"Régions"];
+    self.sheetTitle.text = titles[MIN(self.tab, 4)];
+    switch (self.tab) {
+        case 1: [self buildScan]; break;
+        case 2: [self buildSaved]; break;
+        case 3: [self buildMemory]; break;
+        case 4: [self buildRegions]; break;
+        default: [self buildMenu]; break;
+    }
+    [self.scroll setContentOffset:CGPointZero animated:NO];
+}
+
+// ── Menu-carte (façon iGameGod : icône + titre + sous-titre + chevron) ───────
+- (void)buildMenu {
+    [self.content addArrangedSubview:[self menuRow:@"magnifyingglass" title:@"Recherche de valeurs" sub:@"exacte · floue · affinage" tab:1]];
+    [self.content addArrangedSubview:[self menuRow:@"bookmark.fill" title:@"Enregistrés" sub:@"adresses épinglées · gel" tab:2]];
+    [self.content addArrangedSubview:[self menuRow:@"memorychip" title:@"Navigateur mémoire" sub:@"hex · éditer les octets" tab:3]];
+    [self.content addArrangedSubview:[self menuRow:@"square.grid.2x2.fill" title:@"Régions" sub:@"carte mémoire de la cible" tab:4]];
+    UILabel *hint = [UILabel new]; hint.numberOfLines = 0; hint.font = PXText(12, UIFontWeightRegular); hint.textColor = UIColor.tertiaryLabelColor;
+    hint.text = [NSString stringWithFormat:@"%d gel(s) actif(s) · glisse la pilule pour la déplacer", prism_eng_freeze_count()];
+    [self.content addArrangedSubview:hint];
+}
+- (UIView *)menuRow:(NSString *)sym title:(NSString *)title sub:(NSString *)sub tab:(NSInteger)tab {
+    UIView *row = [[UIView alloc] init]; row.backgroundColor = [UIColor colorWithWhite:1 alpha:0.05]; row.layer.cornerRadius = 12; row.tag = tab;
+    UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:sym]]; icon.tintColor = ACCENT; icon.contentMode = UIViewContentModeScaleAspectFit;
+    UILabel *t = [UILabel new]; t.text = title; t.font = PXText(16, UIFontWeightSemibold); t.textColor = UIColor.labelColor;
+    UILabel *s = [UILabel new]; s.text = sub; s.font = PXText(12, UIFontWeightRegular); s.textColor = UIColor.secondaryLabelColor;
+    UIImageView *chev = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"chevron.right"]]; chev.tintColor = UIColor.tertiaryLabelColor; chev.contentMode = UIViewContentModeScaleAspectFit;
+    UIStackView *tv = [[UIStackView alloc] initWithArrangedSubviews:@[t, s]]; tv.axis = UILayoutConstraintAxisVertical; tv.spacing = 1;
+    UIStackView *hs = [[UIStackView alloc] initWithArrangedSubviews:@[icon, tv, chev]]; hs.axis = UILayoutConstraintAxisHorizontal; hs.spacing = 12; hs.alignment = UIStackViewAlignmentCenter;
+    hs.translatesAutoresizingMaskIntoConstraints = NO; hs.layoutMarginsRelativeArrangement = YES; hs.directionalLayoutMargins = NSDirectionalEdgeInsetsMake(12, 14, 12, 14);
+    [icon.widthAnchor constraintEqualToConstant:26].active = YES; [chev.widthAnchor constraintEqualToConstant:12].active = YES;
+    [tv setContentHuggingPriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
+    [row addSubview:hs];
+    [NSLayoutConstraint activateConstraints:@[[hs.topAnchor constraintEqualToAnchor:row.topAnchor], [hs.bottomAnchor constraintEqualToAnchor:row.bottomAnchor], [hs.leadingAnchor constraintEqualToAnchor:row.leadingAnchor], [hs.trailingAnchor constraintEqualToAnchor:row.trailingAnchor]]];
+    [row addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(onMenuRow:)]];
+    return row;
+}
+- (void)onMenuRow:(UITapGestureRecognizer *)g { self.tab = g.view.tag; [self selectTab]; }
+
+// ── Navigateur mémoire (hex) ────────────────────────────────────────────────
+- (void)buildMemory {
+    if (self.memAddr == 0 && self.hasSelected) self.memAddr = self.selectedAddr;
+    self.memAddrField = [self field:@"adresse 0x…"];
+    if (self.memAddr) self.memAddrField.text = [NSString stringWithFormat:@"0x%llX", self.memAddr];
+    UIStackView *r1 = [[UIStackView alloc] initWithArrangedSubviews:@[self.memAddrField, [self filled:@"Aller" color:ACCENT action:@selector(onMemGo)]]];
+    r1.axis = UILayoutConstraintAxisHorizontal; r1.spacing = 8; [self.content addArrangedSubview:r1];
+    UIStackView *nav = [[UIStackView alloc] initWithArrangedSubviews:@[[self tinted:@"‹ −128" action:@selector(onMemPrev)], [self tinted:@"+128 ›" action:@selector(onMemNext)]]];
+    nav.axis = UILayoutConstraintAxisHorizontal; nav.spacing = 8; nav.distribution = UIStackViewDistributionFillEqually; [self.content addArrangedSubview:nav];
+
+    UIView *card = [[UIView alloc] init]; card.backgroundColor = [UIColor colorWithWhite:0 alpha:0.35]; card.layer.cornerRadius = 10;
+    self.hexLabel = [UILabel new]; self.hexLabel.numberOfLines = 0; self.hexLabel.font = PXMono(10.5, UIFontWeightRegular); self.hexLabel.textColor = UIColor.labelColor;
+    self.hexLabel.translatesAutoresizingMaskIntoConstraints = NO; [card addSubview:self.hexLabel];
+    [NSLayoutConstraint activateConstraints:@[[self.hexLabel.topAnchor constraintEqualToAnchor:card.topAnchor constant:10], [self.hexLabel.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-10], [self.hexLabel.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:10], [self.hexLabel.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-10]]];
+    [self.content addArrangedSubview:card];
+
+    [self.content addArrangedSubview:[self section:@"Écrire des octets (hex) à l'adresse"]];
+    self.hexWriteField = [self field:@"ex. 90 90 90 90"];
+    UIStackView *w = [[UIStackView alloc] initWithArrangedSubviews:@[self.hexWriteField, [self filled:@"Écrire" color:FREEZEC action:@selector(onMemWrite)]]];
+    w.axis = UILayoutConstraintAxisHorizontal; w.spacing = 8; [self.content addArrangedSubview:w];
+    [self loadHex];
+}
+- (unsigned long long)parseAddr:(NSString *)s {
+    s = [s stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if ([s hasPrefix:@"0x"] || [s hasPrefix:@"0X"]) return strtoull([s substringFromIndex:2].UTF8String ?: "", NULL, 16);
+    return strtoull(s.UTF8String ?: "", NULL, 10);
+}
+- (void)onMemGo { self.memAddr = [self parseAddr:self.memAddrField.text]; [self.window endEditing:YES]; [self loadHex]; }
+- (void)onMemPrev { if (self.memAddr >= 128) self.memAddr -= 128; self.memAddrField.text = [NSString stringWithFormat:@"0x%llX", self.memAddr]; [self loadHex]; }
+- (void)onMemNext { self.memAddr += 128; self.memAddrField.text = [NSString stringWithFormat:@"0x%llX", self.memAddr]; [self loadHex]; }
+- (void)onMemWrite { prism_eng_write_bytes(self.memAddr, self.hexWriteField.text.UTF8String ?: ""); [self pulseBar]; [self loadHex]; }
+- (void)loadHex {
+    NSString *hx = PXStr(prism_eng_read_bytes(self.memAddr, 128));
+    NSUInteger bytes = hx.length / 2;
+    if (bytes == 0) { self.hexLabel.text = @"(illisible à cette adresse)"; return; }
+    NSMutableString *out = [NSMutableString string];
+    for (NSUInteger r = 0; r * 8 < bytes; r++) {
+        [out appendFormat:@"%010llX  ", self.memAddr + r * 8];
+        NSMutableString *ascii = [NSMutableString string];
+        for (NSUInteger c = 0; c < 8; c++) {
+            NSUInteger idx = r * 8 + c;
+            if (idx < bytes) {
+                NSString *bs = [hx substringWithRange:NSMakeRange(idx * 2, 2)];
+                [out appendFormat:@"%@ ", bs];
+                int v = (int)strtol(bs.UTF8String, NULL, 16);
+                [ascii appendFormat:@"%c", (v >= 32 && v < 127) ? v : '.'];
+            } else {
+                [out appendString:@"   "];
+            }
+        }
+        [out appendFormat:@" %@\n", ascii];
+    }
+    self.hexLabel.text = out;
 }
 
 - (UILabel *)section:(NSString *)t {
@@ -422,6 +529,13 @@ static NSArray *PXArr(char *c) {
     [self.content addArrangedSubview:[self section:@"Auto (tous les candidats)"]];
     UIStackView *r5 = [[UIStackView alloc] initWithArrangedSubviews:@[[self filled:@"Éditer tout" color:FREEZEC action:@selector(onWriteAll)], [self tinted:@"Figer tout" action:@selector(onFreezeAll)]]];
     r5.axis = UILayoutConstraintAxisHorizontal; r5.spacing = 8; r5.distribution = UIStackViewDistributionFillEqually; [self.content addArrangedSubview:r5];
+    [self.content addArrangedSubview:[self tinted:@"Voir la sélection en mémoire (hex)" action:@selector(onViewMem)]];
+}
+- (void)onViewMem {
+    if (!self.hasSelected) return;
+    self.memAddr = self.selectedAddr;
+    self.tab = 3;
+    [self selectTab];
 }
 
 - (NSString *)targetText {

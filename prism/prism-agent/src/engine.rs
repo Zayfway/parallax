@@ -257,6 +257,45 @@ pub extern "C" fn prism_eng_read(ty: u8, addr: u64) -> *mut c_char {
     cjson(t.fmt(&buf))
 }
 
+/// Navigateur hex : lit jusqu'à `len` octets à `addr`, rendus en hex majuscule.
+#[no_mangle]
+pub extern "C" fn prism_eng_read_bytes(addr: u64, len: u32) -> *mut c_char {
+    let len = (len as usize).min(4096);
+    let mut buf = vec![0u8; len];
+    let got = vm::read_mem(addr, &mut buf).unwrap_or(0);
+    let mut s = String::with_capacity(got * 2);
+    for b in &buf[..got] {
+        s.push_str(&format!("{b:02X}"));
+    }
+    cjson(s)
+}
+
+/// Écrit une suite d'octets (hex, espaces tolérés) à `addr`. 0 = ok, -1 = échec.
+#[no_mangle]
+pub extern "C" fn prism_eng_write_bytes(addr: u64, hex: *const c_char) -> c_int {
+    let hx: String = cstr_in(hex).chars().filter(|c| !c.is_whitespace()).collect();
+    if hx.is_empty() || hx.len() % 2 != 0 {
+        return -1;
+    }
+    let hb = hx.as_bytes();
+    let mut bytes = Vec::with_capacity(hx.len() / 2);
+    let mut i = 0;
+    while i < hb.len() {
+        let hi = (hb[i] as char).to_digit(16);
+        let lo = (hb[i + 1] as char).to_digit(16);
+        match (hi, lo) {
+            (Some(h), Some(l)) => bytes.push((h * 16 + l) as u8),
+            _ => return -1,
+        }
+        i += 2;
+    }
+    if vm::write_mem(addr, &bytes) {
+        0
+    } else {
+        -1
+    }
+}
+
 /// Écrit la valeur typée. 0 = ok, -1 = échec.
 #[no_mangle]
 pub extern "C" fn prism_eng_write(ty: u8, addr: u64, value: *const c_char) -> c_int {
