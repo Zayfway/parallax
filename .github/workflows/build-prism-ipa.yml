@@ -81,10 +81,27 @@ jobs:
           cp -R build/Prism.xcarchive/Products/Applications/Prism.app build/Payload/
           (cd build && zip -qry Prism.ipa Payload)
 
+      - name: Cible de test (PrismTarget)
+        run: |
+          cd prism && xcodegen generate --spec sandbox.yml && cd ..
+          xcodebuild archive -project prism/PrismTarget.xcodeproj -scheme PrismTarget \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -archivePath "$PWD/build/PrismTarget.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+          rm -rf build/PT && mkdir -p build/PT/Payload
+          cp -R build/PrismTarget.xcarchive/Products/Applications/*.app build/PT/Payload/
+          (cd build/PT && zip -qry ../PrismTarget.ipa Payload)
+
       - uses: actions/upload-artifact@v4
         with:
           name: Prism-ipa
           path: build/Prism.ipa
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PrismTarget-ipa
+          path: build/PrismTarget.ipa
           retention-days: 30
 
       - uses: actions/upload-artifact@v4

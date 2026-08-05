@@ -6,6 +6,8 @@ prism-agent/target/
 prism-proto/target/
 prism-core/include/prism.h
 prism-ios/Info.plist       # généré par xcodegen depuis prism.yml
+sandbox/Info.plist         # idem, depuis sandbox.yml
 Prism.xcodeproj/
+PrismTarget.xcodeproj/
 build/
 .DS_Store

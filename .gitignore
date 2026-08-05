@@ -24,3 +24,4 @@ prism/PrismFFI.xcframework/
 prism/**/target/
 prism/prism-core/include/prism.h
 prism/prism-ios/Info.plist
+prism/sandbox/Info.plist
