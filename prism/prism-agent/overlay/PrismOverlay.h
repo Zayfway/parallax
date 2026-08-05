@@ -10,7 +10,8 @@ void prism_overlay_bootstrap(void);
 // Les chaînes rendues sont possédées par l'appelant : libérer via prism_eng_free.
 char *prism_eng_regions(void);                                         // JSON [{addr,size,prot,tag}]
 char *prism_eng_scan(unsigned char ty, const char *value);            // JSON {count,sample}
-char *prism_eng_refine(unsigned char ty, unsigned char op, const char *value); // op 0 EQ,1 UP,2 DOWN,3 SAME
+char *prism_eng_fuzzy_start(unsigned char ty);                        // recherche floue (valeur inconnue)
+char *prism_eng_refine(unsigned char ty, unsigned char op, const char *value); // op 0 EQ,1 UP,2 DOWN,3 SAME,4 CHANGED
 char *prism_eng_read(unsigned char ty, unsigned long long addr);      // valeur formatée (ou "")
 int   prism_eng_write(unsigned char ty, unsigned long long addr, const char *value);
 int   prism_eng_write_all(unsigned char ty, const char *value);   // mode auto

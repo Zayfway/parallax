@@ -191,7 +191,8 @@ pub extern "C" fn prism_eng_refine(ty: u8, op: u8, value: *const c_char) -> *mut
             0 => needle.as_ref().map_or(false, |n| buf.as_slice() == n.as_slice()),
             1 => cur > prev,
             2 => cur < prev,
-            3 => (cur - prev).abs() < f64::EPSILON,
+            3 => (cur - prev).abs() < f64::EPSILON, // inchangé
+            4 => (cur - prev).abs() >= f64::EPSILON, // changé (recherche floue)
             _ => false,
         };
         if ok {
@@ -201,6 +202,46 @@ pub extern "C" fn prism_eng_refine(ty: u8, op: u8, value: *const c_char) -> *mut
     }
     st.cands = ka;
     st.last = kl;
+    let out = sample_json(&st);
+    cjson(out)
+}
+
+/// Recherche floue (valeur inconnue) : capture TOUS les slots alignés du type
+/// avec leur valeur courante. On affine ensuite par ▲/▼/≈/≠ sans saisir de
+/// valeur. Plafonné en mémoire ; on note si tronqué.
+#[no_mangle]
+pub extern "C" fn prism_eng_fuzzy_start(ty: u8) -> *mut c_char {
+    const FUZZY_CAP: usize = 2_000_000;
+    let t = Ty::from_u8(ty);
+    let w = t.width();
+    let mut st = lock(&STATE);
+    st.ty = ty;
+    st.cands.clear();
+    st.last.clear();
+    let mut buf = vec![0u8; CHUNK];
+    'regions: for (base, size) in vm::scan_regions() {
+        if size > MAX_REGION {
+            continue;
+        }
+        let mut off: u64 = 0;
+        while off < size {
+            let this = std::cmp::min(CHUNK as u64, size - off) as usize;
+            let got = match vm::read_mem(base + off, &mut buf[..this]) {
+                Some(n) => n,
+                None => break,
+            };
+            let mut i = 0usize;
+            while i + w <= got {
+                st.cands.push(base + off + i as u64);
+                st.last.push(t.num(&buf[i..i + w]));
+                if st.cands.len() >= FUZZY_CAP {
+                    break 'regions;
+                }
+                i += w;
+            }
+            off += this as u64;
+        }
+    }
     let out = sample_json(&st);
     cjson(out)
 }

@@ -389,12 +389,14 @@ static NSArray *PXArr(char *c) {
     r1.axis = UILayoutConstraintAxisHorizontal; r1.spacing = 8;
     [self.searchField setContentHuggingPriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
     [self.content addArrangedSubview:r1];
+    [self.content addArrangedSubview:[self tinted:@"Recherche floue (valeur inconnue)" action:@selector(onFuzzy)]];
 
     // Affiner
     [self.content addArrangedSubview:[self section:@"Affiner"]];
     UIStackView *rr = [[UIStackView alloc] initWithArrangedSubviews:@[
         [self tinted:@"=" action:@selector(onRefEq)], [self tinted:@"▲" action:@selector(onRefUp)],
-        [self tinted:@"▼" action:@selector(onRefDown)], [self tinted:@"≈" action:@selector(onRefSame)]]];
+        [self tinted:@"▼" action:@selector(onRefDown)], [self tinted:@"≈" action:@selector(onRefSame)],
+        [self tinted:@"≠" action:@selector(onRefChanged)]]];
     rr.axis = UILayoutConstraintAxisHorizontal; rr.spacing = 8; rr.distribution = UIStackViewDistributionFillEqually;
     [self.content addArrangedSubview:rr];
 
@@ -469,6 +471,13 @@ static NSArray *PXArr(char *c) {
 - (void)onRefUp { [self refine:1]; }
 - (void)onRefDown { [self refine:2]; }
 - (void)onRefSame { [self refine:3]; }
+- (void)onRefChanged { [self refine:4]; }
+- (void)onFuzzy {
+    [self.window endEditing:YES];
+    [self applyScan:PXObj(prism_eng_fuzzy_start([self ty])) verb:@"floue"];
+    self.statusLabel.textColor = ACCENT;
+    self.statusLabel.text = [self.statusLabel.text stringByAppendingString:@" · change une valeur puis ▲▼≈≠"];
+}
 
 - (void)onWrite {
     if (!self.hasSelected) { self.targetLabel.textColor = BADC; self.targetLabel.text = @"choisis un candidat d'abord"; return; }
