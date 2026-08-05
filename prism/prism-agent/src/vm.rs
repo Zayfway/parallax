@@ -175,3 +175,46 @@ pub fn write_i32(addr: u64, value: i32) -> bool {
     };
     kr == KERN_SUCCESS
 }
+
+// ── Accès mémoire générique (overlay multi-types) ───────────────────────────
+
+/// Lecture brute de `buf.len()` octets à `addr`. Renvoie le nombre lu.
+pub fn read_mem(addr: u64, buf: &mut [u8]) -> Option<usize> {
+    read_bytes(task(), addr, buf)
+}
+
+/// Écriture brute : rend la page inscriptible (vm_protect) puis écrit.
+pub fn write_mem(addr: u64, bytes: &[u8]) -> bool {
+    if bytes.is_empty() {
+        return false;
+    }
+    let t = task();
+    unsafe {
+        mach_vm_protect(
+            t,
+            addr as mach_vm_address_t,
+            bytes.len() as mach_vm_size_t,
+            0,
+            VM_PROT_READ | VM_PROT_WRITE,
+        );
+    }
+    let kr = unsafe {
+        mach_vm_write(
+            t,
+            addr as mach_vm_address_t,
+            bytes.as_ptr() as vm_offset_t,
+            bytes.len() as mach_msg_type_number_t,
+        )
+    };
+    kr == KERN_SUCCESS
+}
+
+/// Régions lisibles+inscriptibles, taille raisonnable — cible du scan.
+pub fn scan_regions() -> Vec<(u64, u64)> {
+    let rw = (VM_PROT_READ | VM_PROT_WRITE) as u8;
+    regions()
+        .into_iter()
+        .filter(|r| r.prot & rw == rw && r.size > 0 && r.size <= 512 * 1024 * 1024)
+        .map(|r| (r.addr, r.size))
+        .collect()
+}
