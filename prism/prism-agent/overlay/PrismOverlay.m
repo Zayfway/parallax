@@ -348,7 +348,6 @@ static NSArray *PXArr(char *c) {
         case 4: [self buildRegions]; break;
         default: [self buildMenu]; break;
     }
-    [self.scroll setContentOffset:CGPointZero animated:NO];
 }
 
 // ── Menu-carte (façon iGameGod : icône + titre + sous-titre + chevron) ───────
