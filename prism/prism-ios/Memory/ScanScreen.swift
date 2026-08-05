@@ -14,6 +14,18 @@ struct ScanScreen: View {
     private let portText = "127.0.0.1:47821"
     private var phase: ScanEngine.Phase { engine.phase }
 
+    // Sous-titre du bandeau — évite le « 0 candidats » trompeur avant toute recherche.
+    private var bannerSubtitle: String {
+        switch phase {
+        case .idle: "aucune session"
+        case .connected: "prêt — saisis une valeur à chercher"
+        case .scanned(let n), .refined(let n): "\(n) adresse\(n > 1 ? "s" : "") candidate\(n > 1 ? "s" : "")"
+        case .locked: "1 adresse verrouillée"
+        case .writing: "valeur écrite en mémoire"
+        case .failed: "voir le diagnostic ci-dessous"
+        }
+    }
+
     var body: some View {
         ZStack {
             PR.Color.canvas
@@ -67,7 +79,7 @@ struct ScanScreen: View {
                 .contentTransition(.symbolEffect(.replace))
             VStack(alignment: .leading, spacing: 2) {
                 Text(phase.label).font(PR.Font.display(16, .semibold)).foregroundStyle(PR.Color.ink)
-                Text("\(engine.candidateCount) candidats")
+                Text(bannerSubtitle)
                     .font(PR.Font.mono(12)).foregroundStyle(PR.Color.inkMuted)
             }
             Spacer()
