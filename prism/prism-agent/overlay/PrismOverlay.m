@@ -79,15 +79,22 @@ static NSArray *PXArr(char *c) {
 @interface PrismRootView : UIView
 @end
 @implementation PrismRootView
+@end
+
+// LE passthrough qui compte : au niveau FENÊTRE. Si le hitTest de la vue racine
+// rend nil, UIWindow renvoie malgré tout self et capte le toucher — d'où l'app
+// figée. Rendre nil ICI fait passer l'événement à la fenêtre de l'app en dessous.
+@interface PrismWindow : UIWindow
+@end
+@implementation PrismWindow
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
     UIView *hit = [super hitTest:point withEvent:event];
-    if (!hit || hit == self) return nil;          // zone vide -> passe à l'app
+    if (!hit) return nil;
     if (gPrismOpen) return hit;                    // panneau ouvert -> modal, on capte
-    // Panneau fermé : ne capter QUE la barre-pilule ; tout le reste passe à l'app.
-    for (UIView *v = hit; v; v = v.superview) {
+    for (UIView *v = hit; v; v = v.superview) {    // fermé -> SEULE la pilule capte
         if (v == gPrismBar) return hit;
     }
-    return nil;
+    return nil;                                    // tout le reste passe à l'app
 }
 @end
 @interface PrismHostVC : UIViewController
@@ -152,7 +159,7 @@ static NSArray *PXArr(char *c) {
         }
         return;
     }
-    UIWindow *w = [[UIWindow alloc] initWithWindowScene:scene];
+    PrismWindow *w = [[PrismWindow alloc] initWithWindowScene:scene];
     w.windowLevel = UIWindowLevelAlert + 10;
     w.backgroundColor = UIColor.clearColor;
     w.rootViewController = [PrismHostVC new];
