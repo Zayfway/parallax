@@ -6,10 +6,12 @@ import SwiftUI
 
 struct ScanScreen: View {
     @EnvironmentObject private var engine: ScanEngine
+    @ObservedObject private var logBridge = LogBridge.shared
     @State private var shown = false
     @State private var scanValue = ""
     @State private var writeValue = ""
 
+    private let portText = "127.0.0.1:47821"
     private var phase: ScanEngine.Phase { engine.phase }
 
     var body: some View {
@@ -41,6 +43,11 @@ struct ScanScreen: View {
                     } else {
                         connectCard.appear(4, shown)
                     }
+
+                    if case .failed(let msg) = phase {
+                        errorCard(msg).appear(7, shown)
+                    }
+                    diagnosticCard.appear(8, shown)
                 }
                 .padding(.horizontal, PR.Space.base)
                 .padding(.bottom, 110)
@@ -225,5 +232,62 @@ struct ScanScreen: View {
             Spacer()
         }
         .animation(PR.Motion.settle, value: filled)
+    }
+
+    // Carte d'erreur — rend l'échec impossible à rater, avec la cause exacte.
+    private func errorCard(_ msg: String) -> some View {
+        VStack(alignment: .leading, spacing: PR.Space.snug) {
+            HStack(spacing: PR.Space.tight) {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(PR.Color.alert)
+                Text("Connexion échouée").font(PR.Font.display(15, .semibold)).foregroundStyle(PR.Color.ink)
+            }
+            Text(msg)
+                .font(PR.Font.mono(12)).foregroundStyle(PR.Color.inkMuted)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+            Text("L'agent n'écoute pas sur \(portText). Causes probables : l'app cible est suspendue en arrière-plan, ou l'agent n'a pas été injecté / lancé.")
+                .font(PR.Font.body(12)).foregroundStyle(PR.Color.inkFaint)
+            Button { engine.connect() } label: { Text("Réessayer") }
+                .buttonStyle(SecondaryButtonStyle(tint: PR.Color.alert))
+                .disabled(engine.busy)
+        }
+        .padding(PR.Space.base)
+        .glassCard()
+        .overlay(RoundedRectangle(cornerRadius: PR.Radius.card, style: .continuous)
+            .strokeBorder(PR.Color.alert.opacity(0.4), lineWidth: 1))
+    }
+
+    // Panneau diagnostic — profil du cœur, état de l'agent, dernière erreur, log natif.
+    private var diagnosticCard: some View {
+        VStack(alignment: .leading, spacing: PR.Space.tight) {
+            SectionLabel("Diagnostic")
+            diagRow("cœur natif", engine.profile.isEmpty ? "—" : engine.profile,
+                    tint: engine.profile.contains("stub") ? PR.Color.alert : PR.Color.ink)
+            diagRow("agent", engine.connected ? "\(portText) · connecté" : "\(portText) · non connecté",
+                    tint: engine.connected ? PR.Color.verdant : PR.Color.inkFaint)
+            if let e = engine.lastError {
+                Text(e).font(PR.Font.mono(11)).foregroundStyle(PR.Color.alert)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            if !logBridge.lines.isEmpty {
+                Rectangle().fill(PR.Color.horizon).frame(height: 1).padding(.vertical, 2)
+                ForEach(Array(logBridge.lines.suffix(6).enumerated()), id: \.offset) { _, line in
+                    Text(line).font(PR.Font.mono(10)).foregroundStyle(PR.Color.inkFaint)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+        .padding(PR.Space.base)
+        .glassCard(radius: PR.Radius.chip)
+    }
+
+    private func diagRow(_ k: String, _ v: String, tint: Color) -> some View {
+        HStack {
+            Text(k).font(PR.Font.body(12)).foregroundStyle(PR.Color.inkMuted)
+            Spacer()
+            Text(v).font(PR.Font.mono(11)).foregroundStyle(tint)
+                .lineLimit(1).truncationMode(.middle)
+        }
     }
 }

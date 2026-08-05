@@ -66,6 +66,7 @@ final class ScanEngine: ObservableObject {
     @Published var lastAddress: UInt64?
     @Published var lastValue: Int32?
     @Published var busy = false
+    @Published var lastError: String?
 
     private var session: OpaquePointer?
     var connected: Bool { session != nil }
@@ -81,7 +82,7 @@ final class ScanEngine: ObservableObject {
                 try work(s)
             } catch {
                 let msg = (error as? FFI.Failure)?.detail ?? "\(error)"
-                DispatchQueue.main.async { self.busy = false; self.phase = .failed(msg) }
+                DispatchQueue.main.async { self.busy = false; self.lastError = msg; self.phase = .failed(msg) }
             }
         }
     }
@@ -91,10 +92,10 @@ final class ScanEngine: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 let s = try FFI.open(port: port)
-                DispatchQueue.main.async { self.session = s; self.busy = false; self.phase = .connected }
+                DispatchQueue.main.async { self.session = s; self.busy = false; self.lastError = nil; self.phase = .connected }
             } catch {
                 let msg = (error as? FFI.Failure)?.detail ?? "\(error)"
-                DispatchQueue.main.async { self.busy = false; self.phase = .failed(msg) }
+                DispatchQueue.main.async { self.busy = false; self.lastError = msg; self.phase = .failed(msg) }
             }
         }
     }
